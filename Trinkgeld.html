@@ -1569,7 +1569,10 @@
         })();
         document.addEventListener('DOMContentLoaded', function(){
             var hubLink = document.querySelector('.header a');
-            if(hubLink){ hubLink.setAttribute('href', 'hub.html'); }
+            if(hubLink){
+              var hubStore = String(window.__store_id || sessionStorage.getItem('current_store') || localStorage.getItem('current_store') || 'koeln').toLowerCase();
+              hubLink.setAttribute('href', 'hub.html?store=' + encodeURIComponent(hubStore));
+            }
             var storeSelect = document.getElementById('storeSelect');
             if(storeSelect){
                 var s = (sessionStorage.getItem('current_store') || localStorage.getItem('current_store') || 'koeln').toLowerCase();
