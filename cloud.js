@@ -300,6 +300,35 @@ async function refreshCloudUI() {
   setVisible('cloudActionsRow', isLoggedIn);
 }
 
+function setCloudErr(msg) {
+  const errEl = document.getElementById('cloudError');
+  if (!errEl) return;
+  errEl.textContent = msg || '';
+  errEl.style.display = msg ? 'block' : 'none';
+}
+
+function setCloudOk(msg) {
+  const okEl = document.getElementById('cloudOk');
+  if (!okEl) return;
+  okEl.textContent = msg || '';
+  okEl.style.display = msg ? 'block' : 'none';
+}
+
+async function autoLoadCurrentStore() {
+  const session = await getSession();
+  if (!session) return { skipped: true, found: false, storeId: getStoreId() };
+  const storeId = getStoreId();
+  const found = await downloadStore(storeId);
+  return { skipped: false, found, storeId };
+}
+
+async function autoLoadAllStores() {
+  const session = await getSession();
+  if (!session) return { skipped: true };
+  await downloadAllStores();
+  return { skipped: false };
+}
+
 function bindCloudUI() {
   const loginBtn = document.getElementById('cloudLoginBtn');
   const logoutBtn = document.getElementById('cloudLogoutBtn');
@@ -307,106 +336,97 @@ function bindCloudUI() {
   const downloadStoreBtn = document.getElementById('cloudDownloadStoreBtn');
   const uploadAllBtn = document.getElementById('cloudUploadAllBtn');
   const downloadAllBtn = document.getElementById('cloudDownloadAllBtn');
-  const errEl = document.getElementById('cloudError');
-  const okEl = document.getElementById('cloudOk');
-
-  function setErr(msg) {
-    if (!errEl) return;
-    errEl.textContent = msg || '';
-    errEl.style.display = msg ? 'block' : 'none';
-  }
-  function setOk(msg) {
-    if (!okEl) return;
-    okEl.textContent = msg || '';
-    okEl.style.display = msg ? 'block' : 'none';
-  }
-
   if (loginBtn) {
     loginBtn.addEventListener('click', async () => {
-      setErr('');
-      setOk('');
+      setCloudErr('');
+      setCloudOk('');
       const email = (document.getElementById('cloudEmail')?.value || '').trim();
       const password = (document.getElementById('cloudPassword')?.value || '').trim();
       if (!email || !password) {
-        setErr('Bitte E-Mail und Passwort eingeben.');
+        setCloudErr('Bitte E-Mail und Passwort eingeben.');
         return;
       }
       try {
         await signIn(email, password);
-        setOk('Angemeldet.');
         await refreshCloudUI();
+        setCloudOk('Angemeldet. Lade Standorte…');
+        await autoLoadAllStores();
+        const current = await autoLoadCurrentStore();
+        setCloudOk(current.found
+          ? `Angemeldet. Geladen: ${STORE_LABELS[current.storeId] || current.storeId}.`
+          : `Angemeldet. Keine Cloud-Daten für ${STORE_LABELS[current.storeId] || current.storeId}.`);
       } catch (e) {
-        setErr(e && e.message ? e.message : 'Anmeldung fehlgeschlagen.');
+        setCloudErr(e && e.message ? e.message : 'Anmeldung fehlgeschlagen.');
       }
     });
   }
 
   if (logoutBtn) {
     logoutBtn.addEventListener('click', async () => {
-      setErr('');
-      setOk('');
+      setCloudErr('');
+      setCloudOk('');
       try {
         await signOut();
-        setOk('Abgemeldet.');
+        setCloudOk('Abgemeldet.');
         await refreshCloudUI();
       } catch (e) {
-        setErr(e && e.message ? e.message : 'Abmeldung fehlgeschlagen.');
+        setCloudErr(e && e.message ? e.message : 'Abmeldung fehlgeschlagen.');
       }
     });
   }
 
   if (uploadStoreBtn) {
     uploadStoreBtn.addEventListener('click', async () => {
-      setErr('');
-      setOk('');
+      setCloudErr('');
+      setCloudOk('');
       try {
         const storeId = getStoreId();
         if (!confirm(`Cloud-Daten für "${storeId}" werden komplett durch lokale Daten ersetzt. Fortfahren?`)) return;
         await uploadStore(storeId);
-        setOk(`Cloud ersetzt: ${storeId}.`);
+        setCloudOk(`Cloud ersetzt: ${storeId}.`);
       } catch (e) {
-        setErr(e && e.message ? e.message : 'Upload fehlgeschlagen.');
+        setCloudErr(e && e.message ? e.message : 'Upload fehlgeschlagen.');
       }
     });
   }
 
   if (downloadStoreBtn) {
     downloadStoreBtn.addEventListener('click', async () => {
-      setErr('');
-      setOk('');
+      setCloudErr('');
+      setCloudOk('');
       try {
         const storeId = getStoreId();
         const found = await downloadStore(storeId);
-        setOk(found ? `Geladen: ${storeId}.` : `Keine Cloud-Daten für ${storeId} gefunden.`);
+        setCloudOk(found ? `Geladen: ${storeId}.` : `Keine Cloud-Daten für ${storeId} gefunden.`);
       } catch (e) {
-        setErr(e && e.message ? e.message : 'Download fehlgeschlagen.');
+        setCloudErr(e && e.message ? e.message : 'Download fehlgeschlagen.');
       }
     });
   }
 
   if (uploadAllBtn) {
     uploadAllBtn.addEventListener('click', async () => {
-      setErr('');
-      setOk('');
+      setCloudErr('');
+      setCloudOk('');
       try {
         if (!confirm('Cloud-Daten werden komplett durch lokale Daten ersetzt (nur wo lokale Daten vorhanden sind). Fortfahren?')) return;
         const uploadedStores = await uploadAllStores();
-        setOk(`Cloud ersetzt: ${uploadedStores.join(', ')}.`);
+        setCloudOk(`Cloud ersetzt: ${uploadedStores.join(', ')}.`);
       } catch (e) {
-        setErr(e && e.message ? e.message : 'Upload fehlgeschlagen.');
+        setCloudErr(e && e.message ? e.message : 'Upload fehlgeschlagen.');
       }
     });
   }
 
   if (downloadAllBtn) {
     downloadAllBtn.addEventListener('click', async () => {
-      setErr('');
-      setOk('');
+      setCloudErr('');
+      setCloudOk('');
       try {
         await downloadAllStores();
-        setOk(`Geladen: ${ALL_STORE_IDS.map(storeId => STORE_LABELS[storeId] || storeId).join(', ')}.`);
+        setCloudOk(`Geladen: ${ALL_STORE_IDS.map(storeId => STORE_LABELS[storeId] || storeId).join(', ')}.`);
       } catch (e) {
-        setErr(e && e.message ? e.message : 'Download fehlgeschlagen.');
+        setCloudErr(e && e.message ? e.message : 'Download fehlgeschlagen.');
       }
     });
   }
@@ -419,11 +439,24 @@ window.cloud = {
   uploadStore,
   downloadStore,
   uploadAllStores,
-  downloadAllStores
+  downloadAllStores,
+  autoLoadCurrentStore,
+  autoLoadAllStores
 };
 
 document.addEventListener('DOMContentLoaded', async () => {
   if (!document.getElementById('cloudStatus')) return;
   bindCloudUI();
   await refreshCloudUI();
+  try {
+    const session = await getSession();
+    if (!session) return;
+    setCloudOk('Lade Standort…');
+    const current = await autoLoadCurrentStore();
+    setCloudOk(current.found
+      ? `Geladen: ${STORE_LABELS[current.storeId] || current.storeId}.`
+      : `Keine Cloud-Daten für ${STORE_LABELS[current.storeId] || current.storeId}.`);
+  } catch (e) {
+    setCloudErr(e && e.message ? e.message : 'Automatisches Laden fehlgeschlagen.');
+  }
 });
