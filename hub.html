@@ -158,14 +158,12 @@
         <button class="btn secondary" id="cloudLogoutBtn">Abmelden</button>
       </div>
       <div class="row" id="cloudActionsRow" style="display:none;margin-top:10px">
-        <button class="btn ok" id="cloudUploadStoreBtn">⬆️ Aktuellen Standort hochladen</button>
-        <button class="btn" id="cloudDownloadStoreBtn">⬇️ Aktuellen Standort laden</button>
-        <button class="btn ok" id="cloudUploadAllBtn">⬆️ Alle Standorte hochladen</button>
-        <button class="btn" id="cloudDownloadAllBtn">⬇️ Alle Standorte laden</button>
+        <button class="btn ok" id="cloudUploadStoreBtn">☁️ Standort in der Cloud speichern</button>
+        <button class="btn ok" id="cloudUploadAllBtn">☁️ Alle Standorte speichern</button>
       </div>
       <div class="msg err" id="cloudError"></div>
       <div class="msg ok" id="cloudOk"></div>
-        <div class="small">Nach dem Anmelden wird nur dieser Standort geladen. Beim Wechsel holt das Gerät den neuen Standort aus der Cloud. Zum Sichern ⬆️ Aktuellen Standort hochladen.</div>
+        <div class="small">Beim Öffnen eines Standorts werden die Cloud-Daten automatisch geladen. Speichern überschreibt die Cloud mit den Daten dieses Geräts.</div>
     </div>
   </div>
 
@@ -638,6 +636,6 @@
       }
     });
   </script>
-  <script src="cloud.js?v=7"></script>
+  <script src="cloud.js?v=10"></script>
 </body>
 </html>

@@ -361,9 +361,7 @@ function bindCloudUI() {
   const loginBtn = document.getElementById('cloudLoginBtn');
   const logoutBtn = document.getElementById('cloudLogoutBtn');
   const uploadStoreBtn = document.getElementById('cloudUploadStoreBtn');
-  const downloadStoreBtn = document.getElementById('cloudDownloadStoreBtn');
   const uploadAllBtn = document.getElementById('cloudUploadAllBtn');
-  const downloadAllBtn = document.getElementById('cloudDownloadAllBtn');
   if (loginBtn) {
     loginBtn.addEventListener('click', async () => {
       setCloudErr('');
@@ -408,25 +406,14 @@ function bindCloudUI() {
       setCloudOk('');
       try {
         const storeId = getStoreId();
-        if (!confirm(`Cloud-Daten für "${storeId}" werden komplett durch lokale Daten ersetzt. Fortfahren?`)) return;
+        if (!confirm(`Cloud-Daten für "${storeId}" werden komplett durch die Daten dieses Geräts ersetzt. Fortfahren?`)) return;
         await uploadStore(storeId);
-        setCloudOk(`Cloud ersetzt: ${storeId}.`);
+        const found = await downloadStore(storeId);
+        setCloudOk(found
+          ? `Gespeichert und geladen: ${STORE_LABELS[storeId] || storeId}.`
+          : `Gespeichert: ${STORE_LABELS[storeId] || storeId}.`);
       } catch (e) {
         setCloudErr(e && e.message ? e.message : 'Upload fehlgeschlagen.');
-      }
-    });
-  }
-
-  if (downloadStoreBtn) {
-    downloadStoreBtn.addEventListener('click', async () => {
-      setCloudErr('');
-      setCloudOk('');
-      try {
-        const storeId = getStoreId();
-        const found = await downloadStore(storeId);
-        setCloudOk(found ? `Geladen: ${storeId}.` : `Keine Cloud-Daten für ${storeId} gefunden.`);
-      } catch (e) {
-        setCloudErr(e && e.message ? e.message : 'Download fehlgeschlagen.');
       }
     });
   }
@@ -436,27 +423,13 @@ function bindCloudUI() {
       setCloudErr('');
       setCloudOk('');
       try {
-        if (!confirm('Cloud-Daten werden komplett durch lokale Daten ersetzt (nur wo lokale Daten vorhanden sind). Fortfahren?')) return;
+        if (!confirm('Cloud-Daten werden komplett durch die Daten dieses Geräts ersetzt (nur wo lokale Daten vorhanden sind). Fortfahren?')) return;
         const uploadedStores = await uploadAllStores();
-        setCloudOk(`Cloud ersetzt: ${uploadedStores.join(', ')}.`);
+        const storeId = getStoreId();
+        await downloadStore(storeId);
+        setCloudOk(`Gespeichert: ${uploadedStores.join(', ')}. Geladen: ${STORE_LABELS[storeId] || storeId}.`);
       } catch (e) {
         setCloudErr(e && e.message ? e.message : 'Upload fehlgeschlagen.');
-      }
-    });
-  }
-
-  if (downloadAllBtn) {
-    downloadAllBtn.addEventListener('click', async () => {
-      setCloudErr('');
-      setCloudOk('');
-      try {
-        const storeId = getStoreId();
-        const found = await downloadAllStores();
-        setCloudOk(found
-          ? `Geladen: ${STORE_LABELS[storeId] || storeId} (nur aktueller Standort).`
-          : `Keine Cloud-Daten für ${STORE_LABELS[storeId] || storeId}.`);
-      } catch (e) {
-        setCloudErr(e && e.message ? e.message : 'Download fehlgeschlagen.');
       }
     });
   }
