@@ -262,11 +262,6 @@
     }
 
     function getStoreId(){
-      try{
-        var params=new URLSearchParams(location.search);
-        var urlStore=params.get('store');
-        if(urlStore && /^[a-z0-9_-]+$/.test(urlStore)) return String(urlStore).toLowerCase();
-      }catch(e){}
       var s=null;
       try{s=sessionStorage.getItem('current_store') || localStorage.getItem('current_store');}catch(e){}
       return String(window.__store_id || s || 'koeln').toLowerCase();
@@ -629,6 +624,6 @@
       }
     });
   </script>
-  <script src="cloud.js?v=6"></script>
+  <script src="cloud.js?v=5"></script>
 </body>
 </html>
