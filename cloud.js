@@ -243,28 +243,6 @@ function hasLocalDataForStore(storeId) {
   return false;
 }
 
-const CLOUD_PENDING_STORE_KEY = 'cloud_pending_store_load';
-const CLOUD_RELOAD_COUNT_KEY = 'cloud_pending_reload_count';
-const LOCAL_PRESERVE_KEYS = new Set([SESSION_STORAGE_KEY, 'current_store']);
-
-function listLocalStorageKeys() {
-  const keys = [];
-  try {
-    for (let i = 0; i < localStorage.length; i++) {
-      const k = localStorage.key(i);
-      if (k) keys.push(k);
-    }
-  } catch (e) {}
-  return keys;
-}
-
-function clearDeviceStoreCache() {
-  listLocalStorageKeys().forEach(k => {
-    if (LOCAL_PRESERVE_KEYS.has(k)) return;
-    try { localStorage.removeItem(k); } catch (e) {}
-  });
-}
-
 function evictOtherStoreData(keepStoreId) {
   const keep = String(keepStoreId || '').toLowerCase();
   ALL_STORE_IDS.forEach(storeId => {
@@ -276,24 +254,18 @@ function evictOtherStoreData(keepStoreId) {
 }
 
 function applyStoreState(state) {
-  if (!state || !state.keys || typeof state.keys !== 'object') {
-    return { ok: false, written: 0, failed: 0 };
-  }
-  let written = 0;
-  let failed = 0;
+  if (!state || !state.keys || typeof state.keys !== 'object') return;
+  const storeId = String((state && state.storeId) || getStoreId() || 'koeln').toLowerCase();
+  evictOtherStoreData(storeId);
   Object.entries(state.keys).forEach(([k, v]) => {
     try {
       if (v === null || v === undefined) {
         localStorage.removeItem(k);
       } else {
         localStorage.setItem(k, String(v));
-        written += 1;
       }
-    } catch (e) {
-      failed += 1;
-    }
+    } catch (e) {}
   });
-  return { ok: failed === 0, written, failed };
 }
 
 async function uploadStore(storeId) {
@@ -310,33 +282,11 @@ async function uploadStore(storeId) {
 async function downloadStore(storeId) {
   const session = await getSession();
   if (!session) throw new Error('Nicht angemeldet.');
+  evictOtherStoreData(storeId);
   const rows = await restRequest('GET', `/rest/v1/app_state?select=state&store_id=eq.${encodeURIComponent(storeId)}&limit=1`, session.access_token);
   const row = Array.isArray(rows) && rows.length > 0 ? rows[0] : null;
-  if (row && row.state) {
-    const applied = applyStoreState(row.state);
-    if (!applied.ok) {
-      throw new Error('Speicher auf diesem Gerät ist voll. Der Standort konnte nicht gespeichert werden.');
-    }
-  }
+  if (row && row.state) applyStoreState(row.state);
   return !!(row && row.state);
-}
-
-function readSessionFlag(key) {
-  try { return sessionStorage.getItem(key) || ''; } catch (e) { return ''; }
-}
-
-function writeSessionFlag(key, value) {
-  try {
-    if (value === null || value === undefined || value === '') sessionStorage.removeItem(key);
-    else sessionStorage.setItem(key, String(value));
-  } catch (e) {}
-}
-
-function reloadToLoadStore(storeId) {
-  const attempts = parseInt(readSessionFlag(CLOUD_RELOAD_COUNT_KEY) || '0', 10) || 0;
-  writeSessionFlag(CLOUD_PENDING_STORE_KEY, storeId);
-  writeSessionFlag(CLOUD_RELOAD_COUNT_KEY, String(attempts + 1));
-  location.reload();
 }
 
 async function uploadAllStores() {
@@ -394,35 +344,10 @@ function setCloudOk(msg) {
 
 async function autoLoadCurrentStore() {
   const session = await getSession();
+  if (!session) return { skipped: true, found: false, storeId: getStoreId() };
   const storeId = getStoreId();
-  if (!session) return { skipped: true, found: false, reloading: false, storeId };
-
-  const pending = readSessionFlag(CLOUD_PENDING_STORE_KEY);
-  if (pending === storeId) {
-    writeSessionFlag(CLOUD_PENDING_STORE_KEY, '');
-    try {
-      const found = await downloadStore(storeId);
-      writeSessionFlag(CLOUD_RELOAD_COUNT_KEY, '');
-      return { skipped: false, found, reloading: false, storeId };
-    } catch (e) {
-      const attempts = parseInt(readSessionFlag(CLOUD_RELOAD_COUNT_KEY) || '0', 10) || 0;
-      if (attempts < 3) {
-        clearDeviceStoreCache();
-        reloadToLoadStore(storeId);
-        return { skipped: false, found: false, reloading: true, storeId };
-      }
-      throw e;
-    }
-  }
-
-  const attempts = parseInt(readSessionFlag(CLOUD_RELOAD_COUNT_KEY) || '0', 10) || 0;
-  if (attempts >= 3) {
-    throw new Error('Speicher auf diesem Gerät ist voll. In Safari: Einstellungen → Safari → Verlauf und Websitedaten, dann diese Website erneut öffnen.');
-  }
-
-  clearDeviceStoreCache();
-  reloadToLoadStore(storeId);
-  return { skipped: false, found: false, reloading: true, storeId };
+  const found = await downloadStore(storeId);
+  return { skipped: false, found, storeId };
 }
 
 async function autoLoadAllStores() {
@@ -454,10 +379,6 @@ function bindCloudUI() {
         await refreshCloudUI();
         setCloudOk('Angemeldet. Lade Standort…');
         const current = await autoLoadCurrentStore();
-        if (current.reloading) {
-          setCloudOk('Speicher wird geleert…');
-          return;
-        }
         setCloudOk(current.found
           ? `Angemeldet. Geladen: ${STORE_LABELS[current.storeId] || current.storeId}.`
           : `Angemeldet. Keine Cloud-Daten für ${STORE_LABELS[current.storeId] || current.storeId}.`);
@@ -501,15 +422,9 @@ function bindCloudUI() {
       setCloudErr('');
       setCloudOk('');
       try {
-        setCloudOk('Lade Standort…');
-        const current = await autoLoadCurrentStore();
-        if (current.reloading) {
-          setCloudOk('Speicher wird geleert…');
-          return;
-        }
-        setCloudOk(current.found
-          ? `Geladen: ${current.storeId}.`
-          : `Keine Cloud-Daten für ${current.storeId} gefunden.`);
+        const storeId = getStoreId();
+        const found = await downloadStore(storeId);
+        setCloudOk(found ? `Geladen: ${storeId}.` : `Keine Cloud-Daten für ${storeId} gefunden.`);
       } catch (e) {
         setCloudErr(e && e.message ? e.message : 'Download fehlgeschlagen.');
       }
@@ -535,14 +450,11 @@ function bindCloudUI() {
       setCloudErr('');
       setCloudOk('');
       try {
-        const current = await autoLoadCurrentStore();
-        if (current.reloading) {
-          setCloudOk('Speicher wird geleert…');
-          return;
-        }
-        setCloudOk(current.found
-          ? `Geladen: ${STORE_LABELS[current.storeId] || current.storeId} (nur aktueller Standort).`
-          : `Keine Cloud-Daten für ${STORE_LABELS[current.storeId] || current.storeId}.`);
+        const storeId = getStoreId();
+        const found = await downloadAllStores();
+        setCloudOk(found
+          ? `Geladen: ${STORE_LABELS[storeId] || storeId} (nur aktueller Standort).`
+          : `Keine Cloud-Daten für ${STORE_LABELS[storeId] || storeId}.`);
       } catch (e) {
         setCloudErr(e && e.message ? e.message : 'Download fehlgeschlagen.');
       }
@@ -571,10 +483,6 @@ document.addEventListener('DOMContentLoaded', async () => {
     if (!session) return;
     setCloudOk('Lade Standort…');
     const current = await autoLoadCurrentStore();
-    if (current.reloading) {
-      setCloudOk('Speicher wird geleert…');
-      return;
-    }
     setCloudOk(current.found
       ? `Geladen: ${STORE_LABELS[current.storeId] || current.storeId}.`
       : `Keine Cloud-Daten für ${STORE_LABELS[current.storeId] || current.storeId}.`);
