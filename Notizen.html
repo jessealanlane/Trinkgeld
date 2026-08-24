@@ -63,8 +63,7 @@
     </div>
   </div>
 
-  <script src="cloud.js?v=9"></script>
-  <script type="text/plain" id="notizen-main">
+  <script>
     (function(){
       function getStoreFromURL(){
         try{
@@ -112,6 +111,15 @@
       localStorage.setItem=function(k,v){ return origSet(mapKey(k), v); };
       localStorage.removeItem=function(k){ return origRem(mapKey(k)); };
       window.__store_id = STORE;
+      window.addEventListener('pageshow', function(event){
+        var urlStoreNow='';
+        try{
+          urlStoreNow=String(new URLSearchParams(location.search).get('store')||'').toLowerCase();
+        }catch(e){}
+        if(event.persisted || (urlStoreNow && STORE && urlStoreNow!==STORE)){
+          location.reload();
+        }
+      });
       document.addEventListener('DOMContentLoaded',()=>{
         const back=document.querySelector('.header a');
         if(back) back.setAttribute('href','hub.html?store='+encodeURIComponent(STORE)+'&r='+Date.now());
@@ -191,6 +199,5 @@
       renderNotes();
     });
   </script>
-  <script src="boot-store.js?v=9"></script>
 </body>
 </html>

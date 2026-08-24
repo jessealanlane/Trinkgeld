@@ -243,86 +243,9 @@ function hasLocalDataForStore(storeId) {
   return false;
 }
 
-const IDB_NAME = 'kaffeesaurus-trinkgeld';
-const IDB_STORE = 'app_state';
-
-function openAppDb() {
-  return new Promise((resolve, reject) => {
-    const req = indexedDB.open(IDB_NAME, 1);
-    req.onupgradeneeded = () => {
-      const db = req.result;
-      if (!db.objectStoreNames.contains(IDB_STORE)) db.createObjectStore(IDB_STORE);
-    };
-    req.onsuccess = () => resolve(req.result);
-    req.onerror = () => reject(req.error || new Error('IndexedDB open failed'));
-  });
-}
-
-async function idbSaveStore(storeId, state) {
-  const db = await openAppDb();
-  await new Promise((resolve, reject) => {
-    const tx = db.transaction(IDB_STORE, 'readwrite');
-    tx.oncomplete = () => resolve();
-    tx.onerror = () => reject(tx.error || new Error('IndexedDB save failed'));
-    tx.objectStore(IDB_STORE).put(state, String(storeId).toLowerCase());
-  });
-}
-
-async function idbLoadStore(storeId) {
-  const db = await openAppDb();
-  return await new Promise((resolve, reject) => {
-    const tx = db.transaction(IDB_STORE, 'readonly');
-    const req = tx.objectStore(IDB_STORE).get(String(storeId).toLowerCase());
-    req.onsuccess = () => resolve(req.result || null);
-    req.onerror = () => reject(req.error || new Error('IndexedDB load failed'));
-  });
-}
-
-function installMemoryLocalStorage(keysObj) {
-  const mem = Object.assign(Object.create(null), keysObj || {});
-  const origGet = localStorage.getItem.bind(localStorage);
-  const origSet = localStorage.setItem.bind(localStorage);
-  const origRem = localStorage.removeItem.bind(localStorage);
-  localStorage.getItem = function (k) {
-    if (Object.prototype.hasOwnProperty.call(mem, k)) return mem[k];
-    return origGet(k);
-  };
-  localStorage.setItem = function (k, v) {
-    mem[k] = String(v);
-    try { origSet(k, v); } catch (e) {}
-    scheduleIdbSaveFromMemory();
-  };
-  localStorage.removeItem = function (k) {
-    delete mem[k];
-    try { origRem(k); } catch (e) {}
-    scheduleIdbSaveFromMemory();
-  };
-  window.__cloudMem = mem;
-}
-
-let idbSaveTimer = null;
-function scheduleIdbSaveFromMemory() {
-  if (!window.__cloudMem) return;
-  clearTimeout(idbSaveTimer);
-  idbSaveTimer = setTimeout(() => {
-    const storeId = getStoreId();
-    const state = {
-      version: 1,
-      storeId,
-      keys: Object.assign({}, window.__cloudMem),
-      exportedAt: new Date().toISOString()
-    };
-    idbSaveStore(storeId, state).catch(() => {});
-  }, 400);
-}
-
-async function fetchStoreState(storeId) {
-  const session = await getSession();
-  if (!session) throw new Error('Nicht angemeldet.');
-  const rows = await restRequest('GET', `/rest/v1/app_state?select=state&store_id=eq.${encodeURIComponent(storeId)}&limit=1`, session.access_token);
-  const row = Array.isArray(rows) && rows.length > 0 ? rows[0] : null;
-  return row && row.state ? row.state : null;
-}
+const CLOUD_PENDING_STORE_KEY = 'cloud_pending_store_load';
+const CLOUD_RELOAD_COUNT_KEY = 'cloud_pending_reload_count';
+const LOCAL_PRESERVE_KEYS = new Set([SESSION_STORAGE_KEY, 'current_store']);
 
 function listLocalStorageKeys() {
   const keys = [];
@@ -373,55 +296,47 @@ function applyStoreState(state) {
   return { ok: failed === 0, written, failed };
 }
 
-async function downloadStore(storeId) {
-  const state = await fetchStoreState(storeId);
-  if (!state) return false;
-  try { await idbSaveStore(storeId, state); } catch (e) {}
-  if (state.keys) installMemoryLocalStorage(state.keys);
-  applyStoreState(state);
-  return true;
-}
-
-async function hydrateCurrentStore() {
-  const storeId = getStoreId();
-  let state = null;
-  try { state = await idbLoadStore(storeId); } catch (e) {}
-  try {
-    const session = await getSession();
-    if (session) {
-      const fresh = await fetchStoreState(storeId);
-      if (fresh) {
-        state = fresh;
-        try { await idbSaveStore(storeId, fresh); } catch (e) {}
-      }
-    }
-  } catch (e) {
-    if (!state) throw e;
-  }
-  if (state && state.keys) {
-    installMemoryLocalStorage(state.keys);
-    applyStoreState(state);
-  }
-  return { storeId, found: !!(state && state.keys) };
-}
-
 async function uploadStore(storeId) {
   const session = await getSession();
   if (!session) throw new Error('Nicht angemeldet.');
-  let state = null;
-  try { state = await idbLoadStore(storeId); } catch (e) {}
-  if (!state || !state.keys) {
-    if (window.__cloudMem && Object.keys(window.__cloudMem).length) {
-      state = { version: 1, storeId, keys: Object.assign({}, window.__cloudMem), exportedAt: new Date().toISOString() };
-    } else {
-      state = collectStoreState(storeId);
-    }
-  }
-  if (!state || !state.keys || !Object.keys(state.keys).length) {
+  if (!hasLocalDataForStore(storeId)) {
     throw new Error(`Keine lokalen Daten für ${storeId} gefunden. Upload abgebrochen.`);
   }
+  const state = collectStoreState(storeId);
   await replaceAppStateRow(storeId, state);
   return true;
+}
+
+async function downloadStore(storeId) {
+  const session = await getSession();
+  if (!session) throw new Error('Nicht angemeldet.');
+  const rows = await restRequest('GET', `/rest/v1/app_state?select=state&store_id=eq.${encodeURIComponent(storeId)}&limit=1`, session.access_token);
+  const row = Array.isArray(rows) && rows.length > 0 ? rows[0] : null;
+  if (row && row.state) {
+    const applied = applyStoreState(row.state);
+    if (!applied.ok) {
+      throw new Error('Speicher auf diesem Gerät ist voll. Der Standort konnte nicht gespeichert werden.');
+    }
+  }
+  return !!(row && row.state);
+}
+
+function readSessionFlag(key) {
+  try { return sessionStorage.getItem(key) || ''; } catch (e) { return ''; }
+}
+
+function writeSessionFlag(key, value) {
+  try {
+    if (value === null || value === undefined || value === '') sessionStorage.removeItem(key);
+    else sessionStorage.setItem(key, String(value));
+  } catch (e) {}
+}
+
+function reloadToLoadStore(storeId) {
+  const attempts = parseInt(readSessionFlag(CLOUD_RELOAD_COUNT_KEY) || '0', 10) || 0;
+  writeSessionFlag(CLOUD_PENDING_STORE_KEY, storeId);
+  writeSessionFlag(CLOUD_RELOAD_COUNT_KEY, String(attempts + 1));
+  location.reload();
 }
 
 async function uploadAllStores() {
@@ -481,8 +396,33 @@ async function autoLoadCurrentStore() {
   const session = await getSession();
   const storeId = getStoreId();
   if (!session) return { skipped: true, found: false, reloading: false, storeId };
-  const found = await downloadStore(storeId);
-  return { skipped: false, found, reloading: false, storeId };
+
+  const pending = readSessionFlag(CLOUD_PENDING_STORE_KEY);
+  if (pending === storeId) {
+    writeSessionFlag(CLOUD_PENDING_STORE_KEY, '');
+    try {
+      const found = await downloadStore(storeId);
+      writeSessionFlag(CLOUD_RELOAD_COUNT_KEY, '');
+      return { skipped: false, found, reloading: false, storeId };
+    } catch (e) {
+      const attempts = parseInt(readSessionFlag(CLOUD_RELOAD_COUNT_KEY) || '0', 10) || 0;
+      if (attempts < 3) {
+        clearDeviceStoreCache();
+        reloadToLoadStore(storeId);
+        return { skipped: false, found: false, reloading: true, storeId };
+      }
+      throw e;
+    }
+  }
+
+  const attempts = parseInt(readSessionFlag(CLOUD_RELOAD_COUNT_KEY) || '0', 10) || 0;
+  if (attempts >= 3) {
+    throw new Error('Speicher auf diesem Gerät ist voll. In Safari: Einstellungen → Safari → Verlauf und Websitedaten, dann diese Website erneut öffnen.');
+  }
+
+  clearDeviceStoreCache();
+  reloadToLoadStore(storeId);
+  return { skipped: false, found: false, reloading: true, storeId };
 }
 
 async function autoLoadAllStores() {
@@ -619,8 +559,7 @@ window.cloud = {
   uploadAllStores,
   downloadAllStores,
   autoLoadCurrentStore,
-  autoLoadAllStores,
-  hydrateCurrentStore
+  autoLoadAllStores
 };
 
 document.addEventListener('DOMContentLoaded', async () => {
