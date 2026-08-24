@@ -1479,6 +1479,7 @@
         </div>
     </div>
 
+    <script src="cloud.js?v=12"></script>
     <script>
         (function(){
             function getStoreFromURL(){
@@ -2339,6 +2340,8 @@
         
         // Session management
         let currentUser = null;
+        let currentUserFromCloud = false;
+        let skipCloudEmployeeRestore = false;
         let sessionTimeout = null;
         const SESSION_DURATION = 5 * 60 * 1000; // 5 minutes in milliseconds
         const ADMIN_STORE_SESSION_KEY = 'cross_store_admin_session';
@@ -2461,13 +2464,39 @@
             startSession(matchedUser, { silent: true });
             return true;
         }
+
+        async function restoreCloudEmployeeSession() {
+            if (skipCloudEmployeeRestore || currentUser) return false;
+            if (!window.cloud || typeof window.cloud.getSession !== 'function') return false;
+            let session = null;
+            try {
+                session = await window.cloud.getSession();
+            } catch (e) {
+                return false;
+            }
+            const email = window.cloud.getSessionUserEmail
+                ? window.cloud.getSessionUserEmail(session)
+                : (session && session.user && session.user.email) || '';
+            const matchedUser = findMatchingPrivilegedEmployee(EMPLOYEES, { email }, false);
+            if (!matchedUser) return false;
+            startSession(matchedUser, { silent: true, fromCloud: true });
+            return true;
+        }
         
         // Session management functions
         function startSession(user, options = {}) {
             currentUser = user;
+            currentUserFromCloud = !!options.fromCloud;
             updateUserDisplay();
-            resetSessionTimeout();
-            saveAdminStoreSession(user);
+            if (options.fromCloud) {
+                if (sessionTimeout) {
+                    clearTimeout(sessionTimeout);
+                    sessionTimeout = null;
+                }
+                try { sessionStorage.removeItem(ADMIN_STORE_SESSION_KEY); } catch (e) {}
+            } else {
+                resetSessionTimeout();
+            }
             if (!options.silent) {
                 showMessage(`Willkommen ${user.name}! Sie sind als ${getRoleName(user.role)} angemeldet.`, 'success');
             }
@@ -2483,7 +2512,9 @@
         }
         
         function endSession() {
+            if (currentUserFromCloud) skipCloudEmployeeRestore = true;
             currentUser = null;
+            currentUserFromCloud = false;
             try { sessionStorage.removeItem(ADMIN_STORE_SESSION_KEY); } catch (e) {}
             updateUserDisplay();
             if (sessionTimeout) {
@@ -13527,6 +13558,12 @@
             document.getElementById('personalEndDate').value = today;
 
             restoreAdminSessionForCurrentStore();
+            restoreCloudEmployeeSession().then(function(restored) {
+                if (restored) {
+                    updateUserDisplay();
+                    displayTodayEntries();
+                }
+            });
             
             console.log('Populating employee dropdowns...');
             populateEmployeeDropdown();
