@@ -28,19 +28,19 @@
     </div>
 
     <div class="grid">
-      <div class="tile link" onclick="setStore('koeln'); openHub('hub.html')" title="Kaffeesaurus Köln öffnen">
+      <div class="tile link" onclick="openHub('hub.html','koeln')" title="Kaffeesaurus Köln öffnen">
         <h2>🏙️ Kaffeesaurus Köln</h2>
       </div>
 
-      <div class="tile link" onclick="setStore('bonn'); openHub('hub.html')" title="Kaffeesaurus Bonn öffnen">
+      <div class="tile link" onclick="openHub('hub.html','bonn')" title="Kaffeesaurus Bonn öffnen">
         <h2>🏙️ Kaffeesaurus Bonn</h2>
       </div>
 
-      <div class="tile link" onclick="setStore('apostelnstr'); openHub('hub.html')" title="CROP - Aposteln öffnen">
+      <div class="tile link" onclick="openHub('hub.html','apostelnstr')" title="CROP - Aposteln öffnen">
         <h2>🏙️ CROP - Aposteln</h2>
       </div>
 
-      <div class="tile link" onclick="setStore('ehrenstr'); openHub('hub.html')" title="CROP - Ehren öffnen">
+      <div class="tile link" onclick="openHub('hub.html','ehrenstr')" title="CROP - Ehren öffnen">
         <h2>🏙️ CROP - Ehren</h2>
       </div>
     </div>
@@ -49,16 +49,15 @@
   </div>
 
   <script>
-    function setStore(s){ try{ localStorage.setItem('current_store', String(s).toLowerCase()); }catch(e){} }
-    function openHub(rel){
-      var s=null;
-      try{s=localStorage.getItem('current_store');}catch(e){}
-      s=(s||'koeln').toLowerCase();
-      if(rel && rel.indexOf('?')===-1 && rel.indexOf('#')===-1){
-        window.location.href = rel + '?store=' + encodeURIComponent(s);
-      }else{
-        window.location.href = rel;
-      }
+    function rememberStore(s){
+      s=String(s||'koeln').toLowerCase();
+      try{ sessionStorage.setItem('current_store', s); }catch(e){}
+      try{ localStorage.setItem('current_store', s); }catch(e){}
+      return s;
+    }
+    function openHub(rel, store){
+      var s=rememberStore(store);
+      window.location.replace(rel + '?store=' + encodeURIComponent(s) + '&r=' + Date.now());
     }
   </script>
 </body>
