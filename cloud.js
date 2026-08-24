@@ -121,6 +121,10 @@ async function signIn(email, password) {
   return session;
 }
 
+async function signOut() {
+  saveSession(null);
+}
+
 async function getAllowedStoreIds() {
   const session = await getSession();
   if (!session) return [];
