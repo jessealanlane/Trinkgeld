@@ -243,20 +243,8 @@ function hasLocalDataForStore(storeId) {
   return false;
 }
 
-function evictOtherStoreData(keepStoreId) {
-  const keep = String(keepStoreId || '').toLowerCase();
-  ALL_STORE_IDS.forEach(storeId => {
-    if (storeId === keep) return;
-    storeKeySetFor(storeId).forEach(k => {
-      try { localStorage.removeItem(k); } catch (e) {}
-    });
-  });
-}
-
 function applyStoreState(state) {
   if (!state || !state.keys || typeof state.keys !== 'object') return;
-  const storeId = String((state && state.storeId) || getStoreId() || 'koeln').toLowerCase();
-  evictOtherStoreData(storeId);
   Object.entries(state.keys).forEach(([k, v]) => {
     try {
       if (v === null || v === undefined) {
@@ -282,7 +270,6 @@ async function uploadStore(storeId) {
 async function downloadStore(storeId) {
   const session = await getSession();
   if (!session) throw new Error('Nicht angemeldet.');
-  evictOtherStoreData(storeId);
   const rows = await restRequest('GET', `/rest/v1/app_state?select=state&store_id=eq.${encodeURIComponent(storeId)}&limit=1`, session.access_token);
   const row = Array.isArray(rows) && rows.length > 0 ? rows[0] : null;
   if (row && row.state) applyStoreState(row.state);
@@ -303,7 +290,9 @@ async function uploadAllStores() {
 }
 
 async function downloadAllStores() {
-  await downloadStore(getStoreId());
+  for (const storeId of ALL_STORE_IDS) {
+    await downloadStore(storeId);
+  }
 }
 
 function setText(id, text) {
@@ -377,7 +366,8 @@ function bindCloudUI() {
       try {
         await signIn(email, password);
         await refreshCloudUI();
-        setCloudOk('Angemeldet. Lade Standort…');
+        setCloudOk('Angemeldet. Lade Standorte…');
+        await autoLoadAllStores();
         const current = await autoLoadCurrentStore();
         setCloudOk(current.found
           ? `Angemeldet. Geladen: ${STORE_LABELS[current.storeId] || current.storeId}.`
@@ -450,11 +440,8 @@ function bindCloudUI() {
       setCloudErr('');
       setCloudOk('');
       try {
-        const storeId = getStoreId();
-        const found = await downloadAllStores();
-        setCloudOk(found
-          ? `Geladen: ${STORE_LABELS[storeId] || storeId} (nur aktueller Standort).`
-          : `Keine Cloud-Daten für ${STORE_LABELS[storeId] || storeId}.`);
+        await downloadAllStores();
+        setCloudOk(`Geladen: ${ALL_STORE_IDS.map(storeId => STORE_LABELS[storeId] || storeId).join(', ')}.`);
       } catch (e) {
         setCloudErr(e && e.message ? e.message : 'Download fehlgeschlagen.');
       }

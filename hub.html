@@ -113,7 +113,7 @@
         <h1 id="hubTitle">Kaffeesaurus Köln</h1>
       </div>
       <div class="actions">
-        <a class="action-link" href="index.html" id="switchStoreLink">🏙️ Standort wechseln</a>
+        <a class="action-link" href="index.html">🏙️ Standort wechseln</a>
         <a class="action-link" href="#" onclick="openSettingsProtected(); return false;">⚙️ Einstellungen</a>
       </div>
     </div>
@@ -165,7 +165,7 @@
       </div>
       <div class="msg err" id="cloudError"></div>
       <div class="msg ok" id="cloudOk"></div>
-        <div class="small">Nach dem Anmelden wird nur dieser Standort geladen. Beim Wechsel holt das Gerät den neuen Standort aus der Cloud. Zum Sichern ⬆️ Aktuellen Standort hochladen.</div>
+        <div class="small">Nach dem Anmelden werden die Cloud-Daten automatisch geladen. Zum Sichern eines Standorts ⬆️ Aktuellen Standort hochladen.</div>
     </div>
   </div>
 
@@ -207,15 +207,6 @@
       document.title=storeDisplay;
       window.__store_id = STORE;
     })();
-    window.addEventListener('pageshow', function(event){
-      var urlStore='';
-      try{
-        urlStore=String(new URLSearchParams(location.search).get('store')||'').toLowerCase();
-      }catch(e){}
-      if(event.persisted || (urlStore && window.__store_id && urlStore!==String(window.__store_id).toLowerCase())){
-        location.reload();
-      }
-    });
 
     function toHex(buffer){
       var bytes=new Uint8Array(buffer);
@@ -503,7 +494,7 @@
 
     function openApp(file){
       var storeId=getStoreId();
-      var url=file + '?store=' + encodeURIComponent(storeId) + '&r=' + Date.now();
+      var url=file + '?store=' + encodeURIComponent(storeId);
       if(String(file||'').toLowerCase()==='trinkgeld.html'){
         var stored=getGateStoredValue(storeId);
         if(stored && !isAdminUnlocked(storeId)){
@@ -638,6 +629,6 @@
       }
     });
   </script>
-  <script src="cloud.js?v=7"></script>
+  <script src="cloud.js?v=6"></script>
 </body>
 </html>

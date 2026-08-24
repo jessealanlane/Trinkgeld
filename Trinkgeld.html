@@ -1542,15 +1542,6 @@
             window.__store_id = STORE;
             window.__store_hasUrl = !!urlStore;
             window.__store_hadStored = hadStored;
-            window.addEventListener('pageshow', function(event){
-              var urlStoreNow='';
-              try{
-                urlStoreNow=String(new URLSearchParams(location.search).get('store')||'').toLowerCase();
-              }catch(e){}
-              if(event.persisted || (urlStoreNow && STORE && urlStoreNow!==STORE)){
-                location.reload();
-              }
-            });
         })();
 
         function isCropStore() {
@@ -1580,7 +1571,7 @@
             var hubLink = document.querySelector('.header a');
             if(hubLink){
               var hubStore = String(window.__store_id || sessionStorage.getItem('current_store') || localStorage.getItem('current_store') || 'koeln').toLowerCase();
-              hubLink.setAttribute('href', 'hub.html?store=' + encodeURIComponent(hubStore) + '&r=' + Date.now());
+              hubLink.setAttribute('href', 'hub.html?store=' + encodeURIComponent(hubStore));
             }
             var storeSelect = document.getElementById('storeSelect');
             if(storeSelect){
@@ -1593,7 +1584,7 @@
                         sessionStorage.setItem('current_store', v);
                     }catch(e){}
                     var path = location.pathname.split('/').pop() || 'Trinkgeld.html';
-                    location.replace(path + '?store=' + encodeURIComponent(v) + '&r=' + Date.now());
+                    location.href = path + '?store=' + encodeURIComponent(v);
                 };
             }
             var overlay = document.getElementById('storeGateOverlay');
@@ -1614,7 +1605,7 @@
                                 sessionStorage.setItem('current_store', v);
                             }catch(e){}
                             var path = location.pathname.split('/').pop() || 'Trinkgeld.html';
-                            location.replace(path + '?store=' + encodeURIComponent(v) + '&r=' + Date.now());
+                            location.href = path + '?store=' + encodeURIComponent(v);
                         });
                     });
                 }

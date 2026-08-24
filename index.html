@@ -57,7 +57,7 @@
     }
     function openHub(rel, store){
       var s=rememberStore(store);
-      window.location.replace(rel + '?store=' + encodeURIComponent(s) + '&r=' + Date.now());
+      window.location.href = rel + '?store=' + encodeURIComponent(s);
     }
   </script>
 </body>
