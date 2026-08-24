@@ -165,7 +165,7 @@
       </div>
       <div class="msg err" id="cloudError"></div>
       <div class="msg ok" id="cloudOk"></div>
-        <div class="small">Beim Standortwechsel leert das Gerät den alten Standort und lädt den neuen aus der Cloud. Zum Sichern ⬆️ Aktuellen Standort hochladen.</div>
+        <div class="small">Standorte werden in einem größeren iPhone-Speicher (IndexedDB) gehalten. Nach dem Anmelden ⬆️ nur zum Sichern auf den Server nutzen.</div>
     </div>
   </div>
 
@@ -207,15 +207,6 @@
       document.title=storeDisplay;
       window.__store_id = STORE;
     })();
-    window.addEventListener('pageshow', function(event){
-      var urlStore='';
-      try{
-        urlStore=String(new URLSearchParams(location.search).get('store')||'').toLowerCase();
-      }catch(e){}
-      if(event.persisted || (urlStore && window.__store_id && urlStore!==String(window.__store_id).toLowerCase())){
-        location.reload();
-      }
-    });
 
     function toHex(buffer){
       var bytes=new Uint8Array(buffer);
@@ -638,6 +629,6 @@
       }
     });
   </script>
-  <script src="cloud.js?v=8"></script>
+  <script src="cloud.js?v=9"></script>
 </body>
 </html>

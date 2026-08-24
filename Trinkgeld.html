@@ -1479,7 +1479,8 @@
         </div>
     </div>
 
-    <script>
+    <script src="cloud.js?v=9"></script>
+    <script type="text/plain" id="trinkgeld-main">
         (function(){
             function getStoreFromURL(){
                 try{
@@ -1542,15 +1543,6 @@
             window.__store_id = STORE;
             window.__store_hasUrl = !!urlStore;
             window.__store_hadStored = hadStored;
-            window.addEventListener('pageshow', function(event){
-              var urlStoreNow='';
-              try{
-                urlStoreNow=String(new URLSearchParams(location.search).get('store')||'').toLowerCase();
-              }catch(e){}
-              if(event.persisted || (urlStoreNow && STORE && urlStoreNow!==STORE)){
-                location.reload();
-              }
-            });
         })();
 
         function isCropStore() {
@@ -13861,5 +13853,6 @@
         document.addEventListener('mousemove', handleUserActivity);
         document.addEventListener('touchstart', handleUserActivity);
     </script>
+    <script src="boot-store.js?v=9"></script>
 </body>
 </html>
