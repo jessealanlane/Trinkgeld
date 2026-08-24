@@ -121,8 +121,20 @@ async function signIn(email, password) {
   return session;
 }
 
-async function signOut() {
-  saveSession(null);
+async function getAllowedStoreIds() {
+  const session = await getSession();
+  if (!session) return [];
+  const email = getSessionUserEmail(session).trim().toLowerCase();
+  if (!email) return [];
+  const rows = await restRequest(
+    'GET',
+    `/rest/v1/store_access?select=store_id&email=eq.${encodeURIComponent(email)}`,
+    session.access_token
+  );
+  if (!Array.isArray(rows)) return [];
+  return rows
+    .map(row => String(row && row.store_id || '').toLowerCase())
+    .filter(id => ALL_STORE_IDS.includes(id));
 }
 
 async function restRequest(method, pathWithQuery, accessToken, bodyObj) {
@@ -291,7 +303,9 @@ async function downloadStore(storeId) {
 
 async function uploadAllStores() {
   const results = [];
-  for (const storeId of ALL_STORE_IDS) {
+  const allowed = await getAllowedStoreIds();
+  const storeIds = allowed.length ? allowed : ALL_STORE_IDS;
+  for (const storeId of storeIds) {
     if (!hasLocalDataForStore(storeId)) continue;
     await uploadStore(storeId);
     results.push(STORE_LABELS[storeId] || storeId);
@@ -392,6 +406,10 @@ function bindCloudUI() {
       setCloudOk('');
       try {
         await signOut();
+        if (document.getElementById('hubTitle')) {
+          location.replace('index.html');
+          return;
+        }
         setCloudOk('Abgemeldet.');
         await refreshCloudUI();
       } catch (e) {
@@ -439,15 +457,37 @@ window.cloud = {
   signIn,
   signOut,
   getSession,
+  getSessionUserEmail,
+  getAllowedStoreIds,
   uploadStore,
   downloadStore,
   uploadAllStores,
   downloadAllStores,
   autoLoadCurrentStore,
-  autoLoadAllStores
+  autoLoadAllStores,
+  STORE_LABELS,
+  ALL_STORE_IDS
 };
 
 document.addEventListener('DOMContentLoaded', async () => {
+  const onHub = /hub\.html$/i.test(location.pathname) || document.getElementById('hubTitle');
+  if (onHub) {
+    try {
+      const session = await getSession();
+      if (!session) {
+        location.replace('index.html');
+        return;
+      }
+      const allowed = await getAllowedStoreIds();
+      if (!allowed.includes(getStoreId())) {
+        location.replace('index.html');
+        return;
+      }
+    } catch (e) {
+      location.replace('index.html');
+      return;
+    }
+  }
   if (!document.getElementById('cloudStatus')) return;
   bindCloudUI();
   await refreshCloudUI();

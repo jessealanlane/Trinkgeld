@@ -3,9 +3,9 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
-  <title>Kaffeesaurus GmbH – Standorte</title>
+  <title>Kaffeesaurus GmbH – Anmeldung</title>
   <style>
-    :root { --bg:#5b4bd8; --muted:#6c757d; --ok:#34c759; }
+    :root { --bg:#5b4bd8; --muted:#6c757d; --ok:#34c759; --primary:#3498db; }
     *{box-sizing:border-box} body{margin:0;font-family:system-ui,-apple-system,Segoe UI,Roboto,Ubuntu;color:#2c3e50;background:linear-gradient(180deg,#6a5ae0 0%,#5b4bd8 100%) no-repeat fixed}
     .wrap{max-width:900px;margin:40px auto;padding:28px;background:#fff;border-radius:18px;box-shadow:0 15px 40px rgba(0,0,0,.15)}
     .head{display:flex;flex-direction:column;align-items:center;gap:6px;margin-bottom:24px}
@@ -14,51 +14,136 @@
     @media (max-width:700px){.grid{grid-template-columns:1fr}}
     .tile{border-radius:16px;padding:26px;min-height:120px;background:#f1f3f5;border:2px solid #e9ecef;box-shadow:0 10px 24px rgba(0,0,0,.06);display:flex;flex-direction:column;justify-content:center;transition:transform .15s ease, box-shadow .15s ease, background .15s}
     .tile h2{margin:0 0 6px 0;font-size:22px}
-    .tile p{margin:0;color:var(--muted)}
     .tile.link{cursor:pointer;background:linear-gradient(180deg,#4cd964 0%,#34c759 100%);color:#fff;border:none}
-    .tile.link p{color:#eefcef} .tile.link:hover{transform:translateY(-2px);box-shadow:0 14px 28px rgba(52,199,89,.35)}
-    .tile.disabled{opacity:.6;cursor:not-allowed}
-    .footer{display:none}
+    .tile.link:hover{transform:translateY(-2px);box-shadow:0 14px 28px rgba(52,199,89,.35)}
+    .login{max-width:420px;margin:0 auto}
+    .login label{display:block;font-weight:700;margin:0 0 6px}
+    .login input{width:100%;padding:12px;border-radius:12px;border:2px solid #e6e9ef;font-size:16px;margin-bottom:12px}
+    .btn{width:100%;padding:12px 14px;border-radius:12px;border:none;cursor:pointer;font-weight:800;background:var(--primary);color:#fff;font-size:16px}
+    .btn.secondary{background:#2c3e50;width:auto}
+    .msg{margin-top:10px;font-weight:800;display:none}
+    .msg.err{color:#c0392b;display:block}
+    .bar{display:flex;justify-content:space-between;align-items:center;gap:12px;flex-wrap:wrap;margin-bottom:18px}
+    .pill{display:inline-flex;align-items:center;padding:6px 10px;border-radius:999px;background:#f1f3f5;border:1px solid #e9ecef;font-weight:700;font-size:12px}
+    .empty{text-align:center;color:var(--muted);padding:20px}
   </style>
 </head>
 <body>
   <div class="wrap">
     <div class="head">
       <h1>☕ Kaffeesaurus GmbH</h1>
+      <p id="pageSubtitle">Bitte anmelden</p>
     </div>
 
-    <div class="grid">
-      <div class="tile link" onclick="openHub('hub.html','koeln')" title="Kaffeesaurus Köln öffnen">
-        <h2>🏙️ Kaffeesaurus Köln</h2>
-      </div>
-
-      <div class="tile link" onclick="openHub('hub.html','bonn')" title="Kaffeesaurus Bonn öffnen">
-        <h2>🏙️ Kaffeesaurus Bonn</h2>
-      </div>
-
-      <div class="tile link" onclick="openHub('hub.html','apostelnstr')" title="CROP - Aposteln öffnen">
-        <h2>🏙️ CROP - Aposteln</h2>
-      </div>
-
-      <div class="tile link" onclick="openHub('hub.html','ehrenstr')" title="CROP - Ehren öffnen">
-        <h2>🏙️ CROP - Ehren</h2>
-      </div>
+    <div id="loginBox" class="login">
+      <label for="homeEmail">E-Mail</label>
+      <input id="homeEmail" type="email" autocomplete="username" placeholder="E-Mail" />
+      <label for="homePassword">Passwort</label>
+      <input id="homePassword" type="password" autocomplete="current-password" placeholder="Passwort" />
+      <button class="btn" id="homeLoginBtn">Anmelden</button>
+      <div class="msg err" id="homeError"></div>
     </div>
 
-    <div class="footer"></div>
+    <div id="locationsBox" style="display:none">
+      <div class="bar">
+        <span class="pill" id="homeStatus">Angemeldet</span>
+        <button class="btn secondary" id="homeLogoutBtn">Abmelden</button>
+      </div>
+      <div class="grid" id="locationGrid"></div>
+      <div class="empty" id="noStores" style="display:none">Für diese E-Mail ist kein Standort hinterlegt.</div>
+    </div>
   </div>
 
+  <script src="cloud.js?v=11"></script>
   <script>
+    const STORE_TILES = {
+      koeln: '🏙️ Kaffeesaurus Köln',
+      bonn: '🏙️ Kaffeesaurus Bonn',
+      apostelnstr: '🏙️ CROP - Aposteln',
+      ehrenstr: '🏙️ CROP - Ehren'
+    };
+
     function rememberStore(s){
       s=String(s||'koeln').toLowerCase();
       try{ sessionStorage.setItem('current_store', s); }catch(e){}
       try{ localStorage.setItem('current_store', s); }catch(e){}
       return s;
     }
-    function openHub(rel, store){
+    function openHub(store){
       var s=rememberStore(store);
-      window.location.replace(rel + '?store=' + encodeURIComponent(s) + '&r=' + Date.now());
+      window.location.replace('hub.html?store=' + encodeURIComponent(s) + '&r=' + Date.now());
     }
+    function setHomeError(msg){
+      var el=document.getElementById('homeError');
+      if(!el) return;
+      el.textContent=msg||'';
+      el.style.display=msg?'block':'none';
+    }
+    function renderStores(storeIds){
+      var grid=document.getElementById('locationGrid');
+      var empty=document.getElementById('noStores');
+      grid.innerHTML='';
+      if(!storeIds || !storeIds.length){
+        empty.style.display='block';
+        return;
+      }
+      empty.style.display='none';
+      storeIds.forEach(function(id){
+        var tile=document.createElement('div');
+        tile.className='tile link';
+        tile.innerHTML='<h2>'+(STORE_TILES[id]||id)+'</h2>';
+        tile.onclick=function(){ openHub(id); };
+        grid.appendChild(tile);
+      });
+    }
+    async function showLoggedIn(session){
+      document.getElementById('loginBox').style.display='none';
+      document.getElementById('locationsBox').style.display='block';
+      document.getElementById('pageSubtitle').textContent='Standort wählen';
+      document.title='Kaffeesaurus GmbH – Standorte';
+      var email=window.cloud.getSessionUserEmail(session);
+      document.getElementById('homeStatus').textContent='Angemeldet: '+email;
+      var stores=await window.cloud.getAllowedStoreIds();
+      renderStores(stores);
+    }
+    function showLogin(){
+      document.getElementById('loginBox').style.display='block';
+      document.getElementById('locationsBox').style.display='none';
+      document.getElementById('pageSubtitle').textContent='Bitte anmelden';
+      document.title='Kaffeesaurus GmbH – Anmeldung';
+    }
+
+    document.addEventListener('DOMContentLoaded', async function(){
+      document.getElementById('homeLoginBtn').onclick=async function(){
+        setHomeError('');
+        var email=(document.getElementById('homeEmail').value||'').trim();
+        var password=(document.getElementById('homePassword').value||'').trim();
+        if(!email || !password){
+          setHomeError('Bitte E-Mail und Passwort eingeben.');
+          return;
+        }
+        try{
+          var session=await window.cloud.signIn(email, password);
+          await showLoggedIn(session);
+        }catch(e){
+          setHomeError(e && e.message ? e.message : 'Anmeldung fehlgeschlagen.');
+        }
+      };
+      document.getElementById('homePassword').onkeydown=function(e){
+        if(e && e.key==='Enter') document.getElementById('homeLoginBtn').click();
+      };
+      document.getElementById('homeLogoutBtn').onclick=async function(){
+        await window.cloud.signOut();
+        showLogin();
+      };
+      try{
+        var session=await window.cloud.getSession();
+        if(session) await showLoggedIn(session);
+        else showLogin();
+      }catch(e){
+        showLogin();
+      }
+    });
   </script>
 </body>
 </html>
