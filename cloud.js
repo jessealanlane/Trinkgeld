@@ -142,7 +142,7 @@ async function getAllowedStoreIds() {
     .filter(id => ALL_STORE_IDS.includes(id));
 }
 
-async function restRequest(method, pathWithQuery, accessToken, bodyObj) {
+async function restRequest(method, pathWithQuery, accessToken, bodyObj, extraHeaders) {
   const headers = {
     apikey: SUPABASE_ANON_KEY
   };
@@ -150,6 +150,11 @@ async function restRequest(method, pathWithQuery, accessToken, bodyObj) {
   if (bodyObj !== undefined) headers['Content-Type'] = 'application/json';
   if (method !== 'GET') {
     headers.Prefer = 'return=minimal';
+  }
+  if (extraHeaders && typeof extraHeaders === 'object') {
+    Object.keys(extraHeaders).forEach(function (key) {
+      if (extraHeaders[key] != null) headers[key] = extraHeaders[key];
+    });
   }
 
   const res = await fetch(`${SUPABASE_URL}${pathWithQuery}`, {
@@ -188,6 +193,120 @@ async function replaceAppStateRow(storeId, state) {
     throw e;
   }
   return true;
+}
+
+const WORK_ENTRY_PAGE = 1000;
+
+function toWorkEntryRow(storeId, entry, deleted) {
+  const payload = entry && typeof entry === 'object' ? entry : {};
+  const entryId = String(payload.timestamp || '').trim();
+  const workDate = String(payload.workDate || '').trim();
+  if (!entryId || !workDate) throw new Error('Schicht ohne Datum oder ID.');
+  return {
+    store_id: String(storeId || getStoreId() || 'koeln').toLowerCase(),
+    entry_id: entryId,
+    work_date: workDate,
+    payload: payload,
+    updated_at: new Date().toISOString(),
+    deleted_at: deleted ? new Date().toISOString() : null
+  };
+}
+
+async function fetchWorkEntries(storeId, workDate) {
+  const session = await getSession();
+  if (!session) return { ok: false, reason: 'auth', entries: [] };
+  const sid = encodeURIComponent(String(storeId || getStoreId() || 'koeln').toLowerCase());
+  let path = `/rest/v1/work_entries?store_id=eq.${sid}&deleted_at=is.null&select=payload&order=updated_at.asc`;
+  if (workDate) path += `&work_date=eq.${encodeURIComponent(String(workDate))}`;
+  const entries = [];
+  let offset = 0;
+  while (true) {
+    const rows = await restRequest(
+      'GET',
+      `${path}&limit=${WORK_ENTRY_PAGE}&offset=${offset}`,
+      session.access_token
+    );
+    const page = Array.isArray(rows) ? rows : [];
+    if (page.length === 0) break;
+    const firstId = page[0] && page[0].payload && page[0].payload.timestamp;
+    if (offset > 0 && firstId && entries.some(function (entry) { return entry.timestamp === firstId; })) break;
+    page.forEach(function (row) {
+      if (row && row.payload && typeof row.payload === 'object') entries.push(row.payload);
+    });
+    if (page.length < WORK_ENTRY_PAGE) break;
+    offset += WORK_ENTRY_PAGE;
+    if (offset > 50000) break;
+  }
+  return { ok: true, entries: entries };
+}
+
+async function upsertWorkEntry(storeId, entry) {
+  const session = await getSession();
+  if (!session) throw new Error('Nicht angemeldet.');
+  const row = toWorkEntryRow(storeId, entry, false);
+  await restRequest(
+    'POST',
+    '/rest/v1/work_entries?on_conflict=store_id,entry_id',
+    session.access_token,
+    row,
+    { Prefer: 'resolution=merge-duplicates,return=minimal' }
+  );
+  return true;
+}
+
+async function upsertWorkEntries(storeId, entries) {
+  const session = await getSession();
+  if (!session) throw new Error('Nicht angemeldet.');
+  const rows = [];
+  (Array.isArray(entries) ? entries : []).forEach(function (entry) {
+    try { rows.push(toWorkEntryRow(storeId, entry, false)); } catch (e) {}
+  });
+  const batchSize = 100;
+  for (let i = 0; i < rows.length; i += batchSize) {
+    await restRequest(
+      'POST',
+      '/rest/v1/work_entries?on_conflict=store_id,entry_id',
+      session.access_token,
+      rows.slice(i, i + batchSize),
+      { Prefer: 'resolution=merge-duplicates,return=minimal' }
+    );
+  }
+  return rows.length;
+}
+
+async function deleteWorkEntry(storeId, entryId) {
+  const session = await getSession();
+  if (!session) throw new Error('Nicht angemeldet.');
+  const sid = encodeURIComponent(String(storeId || getStoreId() || 'koeln').toLowerCase());
+  const eid = encodeURIComponent(String(entryId || ''));
+  await restRequest(
+    'PATCH',
+    `/rest/v1/work_entries?store_id=eq.${sid}&entry_id=eq.${eid}`,
+    session.access_token,
+    { deleted_at: new Date().toISOString(), updated_at: new Date().toISOString() }
+  );
+  return true;
+}
+
+async function deleteWorkEntriesForDate(storeId, workDate) {
+  const session = await getSession();
+  if (!session) throw new Error('Nicht angemeldet.');
+  const sid = encodeURIComponent(String(storeId || getStoreId() || 'koeln').toLowerCase());
+  await restRequest(
+    'PATCH',
+    `/rest/v1/work_entries?store_id=eq.${sid}&work_date=eq.${encodeURIComponent(String(workDate || ''))}&deleted_at=is.null`,
+    session.access_token,
+    { deleted_at: new Date().toISOString(), updated_at: new Date().toISOString() }
+  );
+  return true;
+}
+
+async function seedWorkEntriesIfEmpty(storeId, entries) {
+  const existing = await fetchWorkEntries(storeId);
+  if (!existing.ok) return { ok: false, seeded: 0 };
+  if (existing.entries.length > 0) return { ok: true, seeded: 0 };
+  const seeded = await upsertWorkEntries(storeId, entries);
+  return { ok: true, seeded: seeded };
 }
 
 const SHARED_KEYS = [
@@ -470,6 +589,12 @@ window.cloud = {
   downloadAllStores,
   autoLoadCurrentStore,
   autoLoadAllStores,
+  fetchWorkEntries,
+  upsertWorkEntry,
+  upsertWorkEntries,
+  deleteWorkEntry,
+  deleteWorkEntriesForDate,
+  seedWorkEntriesIfEmpty,
   STORE_LABELS,
   ALL_STORE_IDS
 };

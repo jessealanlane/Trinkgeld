@@ -823,6 +823,7 @@
             </div>
             
             <div id="entryMessage"></div>
+            <div id="liveShiftStatus" style="color:#666;font-size:13px;margin:0 0 10px 0;"></div>
             
             <h3>Heutige Einträge</h3>
             <div id="todayEntries"></div>
@@ -1479,7 +1480,7 @@
         </div>
     </div>
 
-    <script src="cloud.js?v=13"></script>
+    <script src="cloud.js?v=14"></script>
     <script>
         (function(){
             function getStoreFromURL(){
@@ -1822,6 +1823,118 @@
         
         function generateEntryTimestamp() {
             return `${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
+        }
+
+        let liveShiftPollTimer = null;
+        let liveShiftSyncing = false;
+
+        function currentStoreId() {
+            return String(window.__store_id || 'koeln').toLowerCase();
+        }
+
+        function persistWorkEntriesLocal() {
+            localStorage.setItem('workEntries', JSON.stringify(workEntries));
+        }
+
+        function setLiveShiftStatus(text) {
+            const el = document.getElementById('liveShiftStatus');
+            if (el) el.textContent = text || '';
+        }
+
+        function formatLiveClock() {
+            try {
+                return new Date().toLocaleTimeString('de-DE');
+            } catch (e) {
+                return '';
+            }
+        }
+
+        async function refreshLiveShifts(workDate) {
+            if (!window.cloud || typeof window.cloud.fetchWorkEntries !== 'function') return false;
+            try {
+                const result = await window.cloud.fetchWorkEntries(currentStoreId(), workDate || undefined);
+                if (!result || !result.ok) return false;
+                if (workDate) {
+                    const others = workEntries.filter(entry => entry.workDate !== workDate);
+                    workEntries = others.concat(result.entries || []);
+                } else if ((result.entries || []).length === 0) {
+                    if (workEntries.length > 0 && window.cloud.seedWorkEntriesIfEmpty) {
+                        await window.cloud.seedWorkEntriesIfEmpty(currentStoreId(), workEntries);
+                        const seeded = await window.cloud.fetchWorkEntries(currentStoreId());
+                        if (seeded && seeded.ok && (seeded.entries || []).length > 0) {
+                            workEntries = seeded.entries;
+                        }
+                    }
+                } else {
+                    workEntries = result.entries;
+                }
+                persistWorkEntriesLocal();
+                if (typeof displayTodayEntries === 'function' && document.getElementById('workDate')) {
+                    displayTodayEntries();
+                }
+                return true;
+            } catch (e) {
+                return false;
+            }
+        }
+
+        async function initLiveWorkEntries() {
+            setLiveShiftStatus('Lade aktuelle Schichten…');
+            const ok = await refreshLiveShifts();
+            setLiveShiftStatus(ok
+                ? ('Schichten sind aktuell (' + formatLiveClock() + ').')
+                : 'Lokale Schichten geladen. Live-Abgleich nicht verfügbar.');
+            if (liveShiftPollTimer) clearInterval(liveShiftPollTimer);
+            liveShiftPollTimer = setInterval(function () {
+                const entryTab = document.getElementById('entry');
+                if (!entryTab || !entryTab.classList.contains('active')) return;
+                if (liveShiftSyncing) return;
+                const dateEl = document.getElementById('workDate');
+                const date = dateEl ? dateEl.value : '';
+                if (!date) return;
+                refreshLiveShifts(date).then(function (refreshed) {
+                    if (refreshed) setLiveShiftStatus('Schichtplan aktualisiert (' + formatLiveClock() + ').');
+                });
+            }, 10000);
+        }
+
+        async function syncSavedWorkEntry(entry) {
+            persistWorkEntriesLocal();
+            displayTodayEntries();
+            if (!window.cloud || typeof window.cloud.upsertWorkEntry !== 'function') {
+                return { ok: false, extra: 0 };
+            }
+            liveShiftSyncing = true;
+            try {
+                const date = entry && entry.workDate;
+                const before = workEntries.filter(e => e.workDate === date).length;
+                await window.cloud.upsertWorkEntry(currentStoreId(), entry);
+                await refreshLiveShifts(date);
+                const after = workEntries.filter(e => e.workDate === date).length;
+                setLiveShiftStatus('Gespeichert ' + formatLiveClock() + '.');
+                return { ok: true, extra: Math.max(0, after - before) };
+            } catch (e) {
+                setLiveShiftStatus('Lokal gespeichert. Cloud-Speichern fehlgeschlagen.');
+                return { ok: false, extra: 0, error: e };
+            } finally {
+                liveShiftSyncing = false;
+            }
+        }
+
+        function liveSaveMessage(sync, isUpdate) {
+            const time = formatLiveClock();
+            if (sync && sync.ok) {
+                let msg = isUpdate
+                    ? `Eintrag wurde aktualisiert und gespeichert (${time}).`
+                    : `Eintrag wurde gespeichert (${time}).`;
+                if (sync.extra > 0) {
+                    msg += ` ${sync.extra} weitere Schicht(en) von anderen übernommen.`;
+                }
+                return msg;
+            }
+            return isUpdate
+                ? 'Eintrag wurde lokal aktualisiert. Cloud-Speichern fehlgeschlagen.'
+                : 'Eintrag wurde lokal gespeichert. Cloud-Speichern fehlgeschlagen.';
         }
         let dailyCalculations = JSON.parse(localStorage.getItem('dailyCalculations') || '{}');
         let tipData = JSON.parse(localStorage.getItem('tipData') || '{}');
@@ -4360,6 +4473,10 @@
             // Initialize sub-tabs when Einstellungen (monthly) tab is shown
             if (tabName === 'monthly') {
                 showSubTab('settings-backup'); // Default to backup sub-tab
+            }
+            if (tabName === 'entry') {
+                const dateEl = document.getElementById('workDate');
+                if (dateEl && dateEl.value) refreshLiveShifts(dateEl.value);
             }
         }
         
@@ -8510,6 +8627,7 @@
             
             localStorage.setItem('workEntries', JSON.stringify(workEntries));
             displayTodayEntries();
+            const liveSync = await syncSavedWorkEntry(entry);
             
             // If tips are locked for this date, auto-recalculate (whether new entry or update)
             if (isTipsLockedForDate(workDate)) {
@@ -8566,9 +8684,9 @@
                         window.currentCalculation = results;
                         
                         if (isUpdate) {
-                            showMessage('✅ Schicht aktualisiert und Trinkgeldberechnung wurde automatisch neu berechnet!', 'success');
+                            showMessage('✅ Schicht aktualisiert und Trinkgeldberechnung wurde automatisch neu berechnet! ' + liveSaveMessage(liveSync, true), 'success');
                         } else {
-                            showMessage('✅ Eintrag hinzugefügt und Trinkgeldberechnung wurde automatisch neu berechnet!', 'success');
+                            showMessage('✅ Eintrag hinzugefügt und Trinkgeldberechnung wurde automatisch neu berechnet! ' + liveSaveMessage(liveSync, false), 'success');
                         }
                     }
                     return; // Exit early since we already showed a message
@@ -8577,9 +8695,9 @@
             
             // Show appropriate message for new entry or unlocked tips
             if (isUpdate) {
-                showMessage('Eintrag wurde aktualisiert und automatisch gespeichert!', 'success');
+                showMessage(liveSaveMessage(liveSync, true), 'success');
             } else {
-                showMessage('Eintrag wurde hinzugefügt und automatisch gespeichert!', 'success');
+                showMessage(liveSaveMessage(liveSync, false), 'success');
             }
             
             // Auto-refresh calculation tab if it's currently active
@@ -8838,6 +8956,7 @@
             }
             
             // Delete all existing data for target date (complete override)
+            const overwrittenTargetIds = targetEntries.map(entry => entry.timestamp).filter(Boolean);
             workEntries = workEntries.filter(entry => entry.workDate !== targetDate);
             if (dailyCalculations[targetDate]) {
                 delete dailyCalculations[targetDate];
@@ -8878,6 +8997,18 @@
             localStorage.setItem('workEntries', JSON.stringify(workEntries));
             localStorage.setItem('dailyCalculations', JSON.stringify(dailyCalculations));
             localStorage.setItem('tipData', JSON.stringify(tipData));
+            try {
+                if (window.cloud) {
+                    for (let i = 0; i < overwrittenTargetIds.length; i++) {
+                        await window.cloud.deleteWorkEntry(currentStoreId(), overwrittenTargetIds[i]);
+                    }
+                    const moved = workEntries.filter(entry => entry.workDate === targetDate);
+                    if (moved.length && window.cloud.upsertWorkEntries) {
+                        await window.cloud.upsertWorkEntries(currentStoreId(), moved);
+                    }
+                    await refreshLiveShifts(targetDate);
+                }
+            } catch (e) {}
             
             // Switch to target date to show moved data
             document.getElementById('workDate').value = targetDate;
@@ -8953,6 +9084,12 @@
             localStorage.setItem('workEntries', JSON.stringify(workEntries));
             localStorage.setItem('dailyCalculations', JSON.stringify(dailyCalculations));
             localStorage.setItem('tipData', JSON.stringify(tipData));
+            try {
+                if (window.cloud && window.cloud.deleteWorkEntriesForDate) {
+                    await window.cloud.deleteWorkEntriesForDate(currentStoreId(), currentDate);
+                    await refreshLiveShifts(currentDate);
+                }
+            } catch (e) {}
             
             // Update display
             displayTodayEntries();
@@ -10754,6 +10891,12 @@
                 workEntries.splice(entryIndex, 1);
                 localStorage.setItem('workEntries', JSON.stringify(workEntries));
                 displayTodayEntries();
+                try {
+                    if (window.cloud && window.cloud.deleteWorkEntry) {
+                        await window.cloud.deleteWorkEntry(currentStoreId(), timestamp);
+                        await refreshLiveShifts(date);
+                    }
+                } catch (e) {}
                 
                 // If tips are locked for this date, auto-recalculate after deletion
                 if (isTipsLockedForDate(date)) {
@@ -13590,6 +13733,7 @@
             }
             
             displayTodayEntries();
+            initLiveWorkEntries();
             
             if (workEntries.length > 0 || Object.keys(dailyCalculations).length > 0) {
                 if (totalEmployees > 0) {
@@ -13785,6 +13929,7 @@
             }
             
             displayTodayEntries();
+            if (this.value) refreshLiveShifts(this.value);
             
             // Sync tipsDate1 with workDate when workDate changes manually
             const selectedDate = this.value;
