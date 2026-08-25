@@ -1480,7 +1480,7 @@
         </div>
     </div>
 
-    <script src="cloud.js?v=14"></script>
+    <script src="cloud.js?v=15"></script>
     <script>
         (function(){
             function getStoreFromURL(){
@@ -1866,7 +1866,24 @@
                         }
                     }
                 } else {
-                    workEntries = result.entries;
+                    const remote = result.entries || [];
+                    const remoteIds = {};
+                    remote.forEach(function (entry) {
+                        if (entry && entry.timestamp) remoteIds[String(entry.timestamp)] = true;
+                    });
+                    let deletedIds = {};
+                    if (window.cloud.fetchDeletedWorkEntryIds) {
+                        const deleted = await window.cloud.fetchDeletedWorkEntryIds(currentStoreId());
+                        (deleted || []).forEach(function (id) { deletedIds[String(id)] = true; });
+                    }
+                    const localOnly = workEntries.filter(function (entry) {
+                        const id = String((entry && entry.timestamp) || '');
+                        return id && !remoteIds[id] && !deletedIds[id];
+                    });
+                    if (localOnly.length && window.cloud.pushMissingWorkEntries) {
+                        await window.cloud.pushMissingWorkEntries(currentStoreId(), localOnly);
+                    }
+                    workEntries = remote.concat(localOnly);
                 }
                 persistWorkEntriesLocal();
                 if (typeof displayTodayEntries === 'function' && document.getElementById('workDate')) {
@@ -1875,6 +1892,17 @@
                 return true;
             } catch (e) {
                 return false;
+            }
+        }
+
+        async function pushRestoredWorkEntriesToCloud() {
+            if (!window.cloud || typeof window.cloud.pushMissingWorkEntries !== 'function') return 0;
+            try {
+                const added = await window.cloud.pushMissingWorkEntries(currentStoreId(), workEntries);
+                await refreshLiveShifts();
+                return added || 0;
+            } catch (e) {
+                return 0;
             }
         }
 
@@ -11867,6 +11895,7 @@
                                 }
                                 
                                 displayTodayEntries();
+                                const addedShifts = await pushRestoredWorkEntriesToCloud();
                                 
                                 let restoreMsg = '';
                                 if (data.employees) {
@@ -11878,6 +11907,9 @@
                                     restoreMsg += ' und Einstellungen';
                                 }
                                 restoreMsg += '!';
+                                if (addedShifts > 0) {
+                                    restoreMsg += ' ' + addedShifts + ' neuere Schichten wurden in die Live-Daten übernommen.';
+                                }
                                 showMessage(restoreMsg, 'success');
                             }
                         } else {
@@ -12057,7 +12089,10 @@
                             migrateHistoricalCalculations();
                         }
                         displayTodayEntries();
-                        showMessage('Backup-Daten wurden zusammengeführt!', 'success');
+                        const addedShifts = await pushRestoredWorkEntriesToCloud();
+                        showMessage(addedShifts > 0
+                            ? ('Backup-Daten wurden zusammengeführt! ' + addedShifts + ' neuere Schichten wurden in die Live-Daten übernommen.')
+                            : 'Backup-Daten wurden zusammengeführt!', 'success');
                     } catch (error) {
                         alert('Fehler beim Lesen der Backup-Datei! ' + (error && error.message ? error.message : ''));
                         console.error('Restore merge error:', error);

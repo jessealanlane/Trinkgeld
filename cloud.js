@@ -309,6 +309,60 @@ async function seedWorkEntriesIfEmpty(storeId, entries) {
   return { ok: true, seeded: seeded };
 }
 
+async function fetchDeletedWorkEntryIds(storeId) {
+  const session = await getSession();
+  if (!session) return [];
+  const sid = encodeURIComponent(String(storeId || getStoreId() || 'koeln').toLowerCase());
+  const path = `/rest/v1/work_entries?store_id=eq.${sid}&deleted_at=not.is.null&select=entry_id`;
+  const ids = [];
+  let offset = 0;
+  while (true) {
+    const rows = await restRequest(
+      'GET',
+      `${path}&limit=${WORK_ENTRY_PAGE}&offset=${offset}`,
+      session.access_token
+    );
+    const page = Array.isArray(rows) ? rows : [];
+    if (page.length === 0) break;
+    page.forEach(function (row) {
+      if (row && row.entry_id) ids.push(String(row.entry_id));
+    });
+    if (page.length < WORK_ENTRY_PAGE) break;
+    offset += WORK_ENTRY_PAGE;
+    if (offset > 50000) break;
+  }
+  return ids;
+}
+
+function parseStoredWorkEntries(storeId, keys) {
+  const sid = String(storeId || 'koeln').toLowerCase();
+  const raw = sid === 'koeln'
+    ? (keys && keys.workEntries)
+    : ((keys && (keys[sid + '_workEntries'] || keys.workEntries)) || null);
+  if (raw == null) return [];
+  try {
+    const parsed = typeof raw === 'string' ? JSON.parse(raw) : raw;
+    return Array.isArray(parsed) ? parsed : [];
+  } catch (e) {
+    return [];
+  }
+}
+
+async function pushMissingWorkEntries(storeId, entries) {
+  const existing = await fetchWorkEntries(storeId);
+  if (!existing.ok) return 0;
+  const have = {};
+  existing.entries.forEach(function (entry) {
+    if (entry && entry.timestamp) have[String(entry.timestamp)] = true;
+  });
+  const missing = (Array.isArray(entries) ? entries : []).filter(function (entry) {
+    return entry && entry.timestamp && !have[String(entry.timestamp)];
+  });
+  if (!missing.length) return 0;
+  await upsertWorkEntries(storeId, missing);
+  return missing.length;
+}
+
 const SHARED_KEYS = [
   'departments',
   'workEntries',
@@ -412,6 +466,9 @@ async function uploadStore(storeId) {
   }
   const state = collectStoreState(storeId);
   await replaceAppStateRow(storeId, state);
+  try {
+    await pushMissingWorkEntries(storeId, parseStoredWorkEntries(storeId, state.keys));
+  } catch (e) {}
   return true;
 }
 
@@ -595,6 +652,8 @@ window.cloud = {
   deleteWorkEntry,
   deleteWorkEntriesForDate,
   seedWorkEntriesIfEmpty,
+  pushMissingWorkEntries,
+  fetchDeletedWorkEntryIds,
   STORE_LABELS,
   ALL_STORE_IDS
 };
