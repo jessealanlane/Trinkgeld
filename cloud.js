@@ -387,35 +387,96 @@ const SHARED_KEYS = [
 
 const TIPS_SYNC_KEYS = ['tipData', 'dailyCalculations', 'lockedTips'];
 
+const SETTINGS_SYNC_KEYS = [
+  'departments',
+  'tipPaymentPeriods',
+  'kitchenProcedureSettings',
+  'spuelerProcedureSettings',
+  'baristaProcedureSettings',
+  'tipProcedurePeriods',
+  'punctuality_enabled',
+  'punctualityPeriods',
+  'tipProcedureSettings',
+  'accessControlSettings'
+];
+
+const STORE_SPECIFIC_SYNC_KEYS = [
+  'koeln_employees',
+  'koeln_personalTipsTimeout',
+  'koeln_lastWorkDate'
+];
+
+function autoSyncStorageKeys(storeId) {
+  const sid = String(storeId || getStoreId() || 'koeln').toLowerCase();
+  const keys = TIPS_SYNC_KEYS.concat(SETTINGS_SYNC_KEYS);
+  STORE_SPECIFIC_SYNC_KEYS.forEach(function (key) {
+    keys.push(sid === 'koeln' ? key : key.replace(/^koeln_/, `${sid}_`));
+  });
+  return keys;
+}
+
+function appStateStorageKey(storeId, key) {
+  const sid = String(storeId || getStoreId() || 'koeln').toLowerCase();
+  if (key.startsWith('koeln_')) {
+    return sid === 'koeln' ? key : key.replace(/^koeln_/, `${sid}_`);
+  }
+  if (SHARED_KEYS.indexOf(key) !== -1) {
+    return sid === 'koeln' ? key : `${sid}_${key}`;
+  }
+  return key;
+}
+
 function tipStorageKey(storeId, key) {
-  return storeId === 'koeln' ? key : `${storeId}_${key}`;
+  return appStateStorageKey(storeId, key);
+}
+
+function localAppStateRevisionStorageKey(storeId) {
+  return `${String(storeId || getStoreId() || 'koeln').toLowerCase()}_app_state_local_revision`;
 }
 
 function localTipRevisionStorageKey(storeId) {
   return `${String(storeId || getStoreId() || 'koeln').toLowerCase()}_app_state_local_tip_revision`;
 }
 
-function markLocalTipStateModified(storeId) {
+function markLocalAppStateModified(storeId) {
   const sid = String(storeId || getStoreId() || 'koeln').toLowerCase();
+  const now = new Date().toISOString();
   try {
-    localStorage.setItem(localTipRevisionStorageKey(sid), new Date().toISOString());
+    localStorage.setItem(localAppStateRevisionStorageKey(sid), now);
+    localStorage.setItem(localTipRevisionStorageKey(sid), now);
   } catch (e) {}
+}
+
+function markLocalAppStateSynced(storeId, syncedAt) {
+  const sid = String(storeId || getStoreId() || 'koeln').toLowerCase();
+  const value = syncedAt || new Date().toISOString();
+  try {
+    localStorage.setItem(localAppStateRevisionStorageKey(sid), value);
+    localStorage.setItem(localTipRevisionStorageKey(sid), value);
+  } catch (e) {}
+}
+
+function markLocalTipStateModified(storeId) {
+  markLocalAppStateModified(storeId);
 }
 
 function markLocalTipStateSynced(storeId, syncedAt) {
-  const sid = String(storeId || getStoreId() || 'koeln').toLowerCase();
-  try {
-    localStorage.setItem(localTipRevisionStorageKey(sid), syncedAt || new Date().toISOString());
-  } catch (e) {}
+  markLocalAppStateSynced(storeId, syncedAt);
 }
 
-function getLocalTipStateRevision(storeId) {
+function getLocalAppStateRevision(storeId) {
   const sid = String(storeId || getStoreId() || 'koeln').toLowerCase();
   try {
-    return localStorage.getItem(localTipRevisionStorageKey(sid)) || '';
+    return localStorage.getItem(localAppStateRevisionStorageKey(sid))
+      || localStorage.getItem(localTipRevisionStorageKey(sid))
+      || '';
   } catch (e) {
     return '';
   }
+}
+
+function getLocalTipStateRevision(storeId) {
+  return getLocalAppStateRevision(storeId);
 }
 
 function getCloudStateTimestamp(cloudRow, cloudState) {
@@ -424,8 +485,8 @@ function getCloudStateTimestamp(cloudRow, cloudState) {
   return '';
 }
 
-function isLocalTipStateNewerThanCloud(storeId, cloudRow, cloudState) {
-  const localRev = getLocalTipStateRevision(storeId);
+function isLocalAppStateNewerThanCloud(storeId, cloudRow, cloudState) {
+  const localRev = getLocalAppStateRevision(storeId);
   if (!localRev) return false;
   const cloudTs = getCloudStateTimestamp(cloudRow, cloudState);
   if (!cloudTs) return true;
@@ -434,6 +495,10 @@ function isLocalTipStateNewerThanCloud(storeId, cloudRow, cloudState) {
   if (Number.isNaN(localMs)) return false;
   if (Number.isNaN(cloudMs)) return true;
   return localMs > cloudMs;
+}
+
+function isLocalTipStateNewerThanCloud(storeId, cloudRow, cloudState) {
+  return isLocalAppStateNewerThanCloud(storeId, cloudRow, cloudState);
 }
 
 function readLocalStorageKeys(storeId) {
@@ -525,25 +590,24 @@ function applyStoreState(state) {
   });
 }
 
-function applyStoreStateWithLocalTipMerge(storeId, cloudState, cloudRow) {
+function applyStoreStateWithLocalMerge(storeId, cloudState, cloudRow) {
   if (!cloudState || !cloudState.keys || typeof cloudState.keys !== 'object') {
-    return { keptLocalTips: false, applied: false };
+    return { keptLocalChanges: false, applied: false };
   }
   const sid = String(storeId || getStoreId() || 'koeln').toLowerCase();
-  const keepLocalTips = isLocalTipStateNewerThanCloud(sid, cloudRow, cloudState);
+  const keepLocalChanges = isLocalAppStateNewerThanCloud(sid, cloudRow, cloudState);
 
-  if (!keepLocalTips) {
+  if (!keepLocalChanges) {
     applyStoreState(cloudState);
-    markLocalTipStateSynced(sid, getCloudStateTimestamp(cloudRow, cloudState));
-    return { keptLocalTips: false, applied: true };
+    markLocalAppStateSynced(sid, getCloudStateTimestamp(cloudRow, cloudState));
+    return { keptLocalChanges: false, applied: true };
   }
 
   const localSnapshot = readLocalStorageKeys(sid);
   const mergedKeys = { ...cloudState.keys };
-  TIPS_SYNC_KEYS.forEach(function (key) {
-    const storageKey = tipStorageKey(sid, key);
-    if (localSnapshot[storageKey] !== undefined) {
-      mergedKeys[storageKey] = localSnapshot[storageKey];
+  autoSyncStorageKeys(sid).forEach(function (key) {
+    if (localSnapshot[key] !== undefined) {
+      mergedKeys[key] = localSnapshot[key];
     }
   });
 
@@ -553,7 +617,16 @@ function applyStoreStateWithLocalTipMerge(storeId, cloudState, cloudRow) {
     keys: mergedKeys,
     exportedAt: cloudState.exportedAt
   });
-  return { keptLocalTips: true, applied: true };
+  return { keptLocalChanges: true, applied: true };
+}
+
+function applyStoreStateWithLocalTipMerge(storeId, cloudState, cloudRow) {
+  const result = applyStoreStateWithLocalMerge(storeId, cloudState, cloudRow);
+  return {
+    keptLocalTips: result.keptLocalChanges,
+    keptLocalChanges: result.keptLocalChanges,
+    applied: result.applied
+  };
 }
 
 async function upsertAppStateRow(storeId, state) {
@@ -575,7 +648,7 @@ async function upsertAppStateRow(storeId, state) {
   return true;
 }
 
-async function syncTipStateToCloud(storeId) {
+async function syncAppStateToCloud(storeId) {
   const sid = String(storeId || getStoreId() || 'koeln').toLowerCase();
   const session = await getSession();
   if (!session) return { ok: false, reason: 'auth' };
@@ -594,10 +667,9 @@ async function syncTipStateToCloud(storeId) {
   const localCollected = collectStoreState(sid);
   const mergedKeys = { ...cloudKeys };
 
-  TIPS_SYNC_KEYS.forEach(function (key) {
-    const storageKey = tipStorageKey(sid, key);
-    if (localCollected.keys[storageKey] !== undefined) {
-      mergedKeys[storageKey] = localCollected.keys[storageKey];
+  autoSyncStorageKeys(sid).forEach(function (key) {
+    if (localCollected.keys[key] !== undefined) {
+      mergedKeys[key] = localCollected.keys[key];
     }
   });
 
@@ -609,8 +681,12 @@ async function syncTipStateToCloud(storeId) {
   };
 
   await upsertAppStateRow(sid, newState);
-  markLocalTipStateSynced(sid, newState.exportedAt);
+  markLocalAppStateSynced(sid, newState.exportedAt);
   return { ok: true, exportedAt: newState.exportedAt };
+}
+
+async function syncTipStateToCloud(storeId) {
+  return syncAppStateToCloud(storeId);
 }
 
 async function uploadStore(storeId) {
@@ -622,7 +698,7 @@ async function uploadStore(storeId) {
   }
   const state = collectStoreState(storeId);
   await replaceAppStateRow(storeId, state);
-  markLocalTipStateSynced(storeId, state.exportedAt);
+  markLocalAppStateSynced(storeId, state.exportedAt);
   try {
     await pushMissingWorkEntries(storeId, parseStoredWorkEntries(storeId, state.keys));
   } catch (e) {}
@@ -642,10 +718,10 @@ async function downloadStore(storeId) {
   const row = Array.isArray(rows) && rows.length > 0 ? rows[0] : null;
   if (!row || !row.state) return false;
 
-  const mergeResult = applyStoreStateWithLocalTipMerge(sid, row.state, row);
-  if (mergeResult.keptLocalTips) {
+  const mergeResult = applyStoreStateWithLocalMerge(sid, row.state, row);
+  if (mergeResult.keptLocalChanges) {
     try {
-      await syncTipStateToCloud(sid);
+      await syncAppStateToCloud(sid);
     } catch (e) {}
   }
   return true;
@@ -935,7 +1011,9 @@ window.cloud = {
   downloadAllStores,
   autoLoadCurrentStore,
   autoLoadAllStores,
+  syncAppStateToCloud,
   syncTipStateToCloud,
+  markLocalAppStateModified,
   markLocalTipStateModified,
   fetchWorkEntries,
   upsertWorkEntry,

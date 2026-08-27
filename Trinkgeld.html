@@ -1480,7 +1480,7 @@
         </div>
     </div>
 
-    <script src="cloud.js?v=19"></script>
+    <script src="cloud.js?v=20"></script>
     <script>
         (function(){
             function getStoreFromURL(){
@@ -1965,31 +1965,53 @@
                 : 'Eintrag wurde lokal gespeichert. Cloud-Speichern fehlgeschlagen.';
         }
 
-        let tipCloudSyncPromise = null;
+        let appStateCloudSyncPromise = null;
+        let appStateCloudSyncTimer = null;
 
-        function markTipStateModifiedLocally() {
-            if (window.cloud && typeof window.cloud.markLocalTipStateModified === 'function') {
+        function markAppStateModifiedLocally() {
+            if (window.cloud && typeof window.cloud.markLocalAppStateModified === 'function') {
+                window.cloud.markLocalAppStateModified(currentStoreId());
+            } else if (window.cloud && typeof window.cloud.markLocalTipStateModified === 'function') {
                 window.cloud.markLocalTipStateModified(currentStoreId());
             }
         }
 
-        async function syncSavedTipState() {
-            markTipStateModifiedLocally();
-            if (!window.cloud || typeof window.cloud.syncTipStateToCloud !== 'function') {
+        function markTipStateModifiedLocally() {
+            markAppStateModifiedLocally();
+        }
+
+        async function syncSavedAppState() {
+            markAppStateModifiedLocally();
+            const syncFn = (window.cloud && window.cloud.syncAppStateToCloud)
+                || (window.cloud && window.cloud.syncTipStateToCloud);
+            if (typeof syncFn !== 'function') {
                 return { ok: false, reason: 'unavailable' };
             }
-            if (tipCloudSyncPromise) return tipCloudSyncPromise;
-            tipCloudSyncPromise = window.cloud.syncTipStateToCloud(currentStoreId())
+            if (appStateCloudSyncPromise) return appStateCloudSyncPromise;
+            appStateCloudSyncPromise = syncFn(currentStoreId())
                 .catch(function (error) {
                     return { ok: false, error: error };
                 })
                 .finally(function () {
-                    tipCloudSyncPromise = null;
+                    appStateCloudSyncPromise = null;
                 });
-            return tipCloudSyncPromise;
+            return appStateCloudSyncPromise;
         }
 
-        function tipSaveMessage(baseMessage, sync) {
+        async function syncSavedTipState() {
+            return syncSavedAppState();
+        }
+
+        function queueAppStateCloudSync() {
+            markAppStateModifiedLocally();
+            if (appStateCloudSyncTimer) clearTimeout(appStateCloudSyncTimer);
+            appStateCloudSyncTimer = setTimeout(function () {
+                appStateCloudSyncTimer = null;
+                syncSavedAppState();
+            }, 400);
+        }
+
+        function cloudSaveMessage(baseMessage, sync) {
             if (!baseMessage) return baseMessage;
             if (sync && sync.ok) {
                 return `${baseMessage} Cloud synchronisiert.`;
@@ -2003,9 +2025,29 @@
             return `${baseMessage} Lokal gespeichert. Cloud-Synchronisation fehlgeschlagen.`;
         }
 
+        function tipSaveMessage(baseMessage, sync) {
+            return cloudSaveMessage(baseMessage, sync);
+        }
+
         window.reloadTrinkgeldStoreState = function () {
             tipData = JSON.parse(localStorage.getItem('tipData') || '{}');
             dailyCalculations = JSON.parse(localStorage.getItem('dailyCalculations') || '{}');
+            tipPaymentPeriods = JSON.parse(localStorage.getItem('tipPaymentPeriods') || '[]');
+            kitchenProcedureSettings = JSON.parse(localStorage.getItem('kitchenProcedureSettings') || '[]');
+            spuelerProcedureSettings = JSON.parse(localStorage.getItem('spuelerProcedureSettings') || '[]');
+            baristaProcedureSettings = JSON.parse(localStorage.getItem('baristaProcedureSettings') || '[]');
+            tipProcedurePeriods = JSON.parse(localStorage.getItem('tipProcedurePeriods') || '[]');
+            departments = JSON.parse(localStorage.getItem('departments') || '[]');
+            EMPLOYEES = JSON.parse(localStorage.getItem('koeln_employees') || '{}');
+            punctualityEnabled = localStorage.getItem('punctuality_enabled') === 'true';
+            punctualityPeriods = JSON.parse(localStorage.getItem('punctualityPeriods') || '[]');
+            const timeoutRaw = localStorage.getItem('koeln_personalTipsTimeout');
+            if (timeoutRaw !== null && timeoutRaw !== undefined && timeoutRaw !== '') {
+                const parsedTimeout = parseInt(timeoutRaw, 10);
+                if (!Number.isNaN(parsedTimeout)) {
+                    PERSONAL_TIPS_TIMEOUT = parsedTimeout * 1000;
+                }
+            }
         };
         let dailyCalculations = JSON.parse(localStorage.getItem('dailyCalculations') || '{}');
         let tipData = JSON.parse(localStorage.getItem('tipData') || '{}');
@@ -2228,6 +2270,7 @@
         function saveTipProcedurePeriods() {
             localStorage.setItem('tipProcedurePeriods', JSON.stringify(tipProcedurePeriods));
             console.log('✅ Unified tip procedure periods saved to localStorage');
+            queueAppStateCloudSync();
         }
 
         // Helper function to find period for a specific date
@@ -2345,11 +2388,13 @@
         // Save enabled state
         function savePunctualityEnabled() {
             localStorage.setItem('punctuality_enabled', punctualityEnabled.toString());
+            queueAppStateCloudSync();
         }
         
         // Save periods
         function savePunctualityPeriods() {
             localStorage.setItem('punctualityPeriods', JSON.stringify(punctualityPeriods));
+            queueAppStateCloudSync();
         }
 
         // Helper to check if entry has punctuality data (was late)
@@ -2906,6 +2951,7 @@
         function saveAccessControlSettingsToStorage(settings) {
             try {
                 localStorage.setItem('accessControlSettings', JSON.stringify(settings));
+                queueAppStateCloudSync();
             } catch (e) {
                 console.error('Fehler beim Speichern der Zugriffssteuerungseinstellungen:', e);
             }
@@ -2958,7 +3004,7 @@
             container.innerHTML = html;
         }
         
-        function saveAccessControlSettings() {
+        async function saveAccessControlSettings() {
             const settings = loadAccessControlSettings();
             const keys = ['editShifts','weeklyTab','editEmployees','editDepartments','editPeriods','editProcedures','systemSettings','viewCalculation'];
             keys.forEach(k => {
@@ -2973,7 +3019,11 @@
                 }
             });
             saveAccessControlSettingsToStorage(settings);
-            showMessage('Zugriffssteuerung gespeichert.', 'success');
+            const sync = await syncSavedAppState();
+            showMessage(
+                cloudSaveMessage('Zugriffssteuerung gespeichert.', sync),
+                sync && sync.ok ? 'success' : (sync && sync.reason === 'auth' ? 'success' : 'warning')
+            );
         }
         
         function canEditShifts() {
@@ -3671,6 +3721,7 @@
         function saveEmployeesToLocalStorage() {
             localStorage.setItem('koeln_employees', JSON.stringify(EMPLOYEES));
             console.log('Employee data saved to localStorage:', EMPLOYEES);
+            queueAppStateCloudSync();
             
             // Verify the save worked
             const savedData = JSON.parse(localStorage.getItem('koeln_employees') || '{}');
@@ -3846,6 +3897,7 @@
         function saveDepartmentsToLocalStorage() {
             localStorage.setItem('departments', JSON.stringify(departments));
             console.log('Departments saved to localStorage');
+            queueAppStateCloudSync();
         }
         
         function showMessage(message, type) {
@@ -5735,6 +5787,7 @@
         function saveTipPaymentPeriodsToLocalStorage() {
             localStorage.setItem('tipPaymentPeriods', JSON.stringify(tipPaymentPeriods));
             console.log('Tip payment periods saved to localStorage:', tipPaymentPeriods);
+            queueAppStateCloudSync();
         }
 
         function getNextTipPaymentPeriodStartDate() {
@@ -6512,11 +6565,13 @@
         function saveKitchenProcedureSettingsToLocalStorage() {
             localStorage.setItem('kitchenProcedureSettings', JSON.stringify(kitchenProcedureSettings));
             console.log('✅ Kitchen procedure settings saved to localStorage');
+            queueAppStateCloudSync();
         }
 
         function saveSpuelerProcedureSettingsToLocalStorage() {
             localStorage.setItem('spuelerProcedureSettings', JSON.stringify(spuelerProcedureSettings));
             console.log('✅ Spüler procedure settings saved to localStorage');
+            queueAppStateCloudSync();
         }
         
         function displayProcedureSettingsTable() {
@@ -11193,8 +11248,12 @@
                     messageDiv.innerHTML = '';
                 }, 3000);
             }
-            
-            showMessage(`Timeout für "Meine Trinkgelder" wurde auf ${successText} gesetzt.`, 'success');
+
+            const sync = await syncSavedAppState();
+            showMessage(
+                cloudSaveMessage(`Timeout für "Meine Trinkgelder" wurde auf ${successText} gesetzt.`, sync),
+                sync && sync.ok ? 'success' : (sync && sync.reason === 'auth' ? 'success' : 'warning')
+            );
             
             // Update preview
             updateTimeoutPreview(totalSeconds);
