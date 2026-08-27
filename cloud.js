@@ -782,9 +782,22 @@ async function autoLoadAllStores() {
   return { skipped: false };
 }
 
+async function handleSignOutClick(event) {
+  if (event) event.preventDefault();
+  setCloudErr('');
+  setCloudOk('');
+  try {
+    await signOut();
+    location.replace('index.html');
+  } catch (e) {
+    setCloudErr(e && e.message ? e.message : 'Abmeldung fehlgeschlagen.');
+  }
+}
+
 function bindCloudUI() {
   const loginBtn = document.getElementById('cloudLoginBtn');
   const logoutBtn = document.getElementById('cloudLogoutBtn');
+  const hubLogoutLink = document.getElementById('hubLogoutLink');
   const uploadStoreBtn = document.getElementById('cloudUploadStoreBtn');
   if (loginBtn) {
     loginBtn.addEventListener('click', async () => {
@@ -810,23 +823,8 @@ function bindCloudUI() {
     });
   }
 
-  if (logoutBtn) {
-    logoutBtn.addEventListener('click', async () => {
-      setCloudErr('');
-      setCloudOk('');
-      try {
-        await signOut();
-        if (document.getElementById('hubTitle')) {
-          location.replace('index.html');
-          return;
-        }
-        setCloudOk('Abgemeldet.');
-        await refreshCloudUI();
-      } catch (e) {
-        setCloudErr(e && e.message ? e.message : 'Abmeldung fehlgeschlagen.');
-      }
-    });
-  }
+  if (logoutBtn) logoutBtn.addEventListener('click', handleSignOutClick);
+  if (hubLogoutLink) hubLogoutLink.addEventListener('click', handleSignOutClick);
 
   if (uploadStoreBtn) {
     uploadStoreBtn.addEventListener('click', async () => {
