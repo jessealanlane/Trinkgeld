@@ -739,7 +739,7 @@
             <h1 id="storeHeading">Kaffeesaurus Köln</h1>
             <div style="display:flex;flex-direction:column;align-items:flex-end;gap:6px">
                 <div id="userDisplay"></div>
-                <div>
+                <div id="storeSelectWrap" style="display:none">
                     <select id="storeSelect" style="padding:4px 8px;border-radius:6px;border:1px solid #bdc3c7;font-size:13px;">
                         <option value="koeln">Kaffeesaurus Köln</option>
                         <option value="bonn">Kaffeesaurus Bonn</option>
@@ -1480,7 +1480,7 @@
         </div>
     </div>
 
-    <script src="cloud.js?v=22"></script>
+    <script src="cloud.js?v=23"></script>
     <script>
         (function(){
             function getStoreFromURL(){
@@ -1592,13 +1592,9 @@
             var overlay = document.getElementById('storeGateOverlay');
             if(overlay){
                 var hasUrl = !!window.__store_hasUrl;
-                if(!hasUrl){
-                    overlay.style.display = 'flex';
-                }else{
-                    overlay.style.display = 'none';
-                }
                 var buttons = overlay.querySelectorAll('.store-gate-btn');
-                if(buttons && buttons.length){
+                function bindOverlayButtons(){
+                    if(!buttons || !buttons.length) return;
                     buttons.forEach(function(btn){
                         btn.addEventListener('click', function(){
                             var v = (btn.getAttribute('data-store') || 'koeln').toLowerCase();
@@ -1611,6 +1607,36 @@
                         });
                     });
                 }
+                (async function(){
+                    var allowed = [];
+                    try{
+                        if(window.cloud && window.cloud.getAllowedStoreIds){
+                            allowed = await window.cloud.getAllowedStoreIds();
+                        }
+                    }catch(e){}
+                    if(!hasUrl && allowed.length === 1){
+                        var v = allowed[0];
+                        try{
+                            localStorage.setItem('current_store', v);
+                            sessionStorage.setItem('current_store', v);
+                        }catch(e){}
+                        var path = location.pathname.split('/').pop() || 'Trinkgeld.html';
+                        location.replace(path + '?store=' + encodeURIComponent(v) + '&r=' + Date.now());
+                        return;
+                    }
+                    if(!hasUrl){
+                        overlay.style.display = 'flex';
+                        if(allowed.length){
+                            buttons.forEach(function(btn){
+                                var id = (btn.getAttribute('data-store') || '').toLowerCase();
+                                btn.style.display = allowed.indexOf(id) === -1 ? 'none' : '';
+                            });
+                        }
+                    }else{
+                        overlay.style.display = 'none';
+                    }
+                    bindOverlayButtons();
+                })();
             }
         });
         // Global variables and employee data
@@ -2857,19 +2883,21 @@
                 }
             }
             
-            // Show/hide store selector (Admin only)
+            // Show/hide store selector (Admin only, and only if more than one store)
             const storeSelect = document.getElementById('storeSelect');
+            const storeSelectWrap = document.getElementById('storeSelectWrap');
             if (storeSelect) {
+                let showStoreSelect = false;
                 if (isSessionActive() && isAdmin()) {
                     const accessibleStores = getAdminAccessibleStoreIds(currentUser);
                     const currentStoreId = String(window.__store_id || sessionStorage.getItem('current_store') || localStorage.getItem('current_store') || 'koeln').toLowerCase();
                     const storesToShow = accessibleStores.length > 0 ? accessibleStores : [currentStoreId];
                     storeSelect.innerHTML = storesToShow.map(storeId => `<option value="${storeId}">${getStoreLabel(storeId)}</option>`).join('');
                     storeSelect.value = storesToShow.includes(currentStoreId) ? currentStoreId : storesToShow[0];
-                    storeSelect.style.display = '';
-                } else {
-                    storeSelect.style.display = 'none';
+                    showStoreSelect = storesToShow.length > 1;
                 }
+                storeSelect.style.display = showStoreSelect ? '' : 'none';
+                if (storeSelectWrap) storeSelectWrap.style.display = showStoreSelect ? '' : 'none';
             }
             
             // Show/hide Trinkgeldberechnung based on access control

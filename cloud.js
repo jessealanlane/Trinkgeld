@@ -724,21 +724,6 @@ async function downloadStore(storeId) {
   return true;
 }
 
-async function uploadAllStores() {
-  const results = [];
-  const allowed = await getAllowedStoreIds();
-  const storeIds = allowed.length ? allowed : ALL_STORE_IDS;
-  for (const storeId of storeIds) {
-    if (!hasLocalDataForStore(storeId)) continue;
-    await uploadStore(storeId);
-    results.push(STORE_LABELS[storeId] || storeId);
-  }
-  if (results.length === 0) {
-    throw new Error('Keine lokalen Daten gefunden. Upload abgebrochen.');
-  }
-  return results;
-}
-
 async function downloadAllStores() {
   await downloadStore(getStoreId());
 }
@@ -801,7 +786,6 @@ function bindCloudUI() {
   const loginBtn = document.getElementById('cloudLoginBtn');
   const logoutBtn = document.getElementById('cloudLogoutBtn');
   const uploadStoreBtn = document.getElementById('cloudUploadStoreBtn');
-  const uploadAllBtn = document.getElementById('cloudUploadAllBtn');
   if (loginBtn) {
     loginBtn.addEventListener('click', async () => {
       setCloudErr('');
@@ -856,22 +840,6 @@ function bindCloudUI() {
         setCloudOk(found
           ? `Gespeichert und geladen: ${STORE_LABELS[storeId] || storeId}.`
           : `Gespeichert: ${STORE_LABELS[storeId] || storeId}.`);
-      } catch (e) {
-        setCloudErr(e && e.message ? e.message : 'Upload fehlgeschlagen.');
-      }
-    });
-  }
-
-  if (uploadAllBtn) {
-    uploadAllBtn.addEventListener('click', async () => {
-      setCloudErr('');
-      setCloudOk('');
-      try {
-        if (!confirm('Cloud-Daten werden komplett durch die Daten dieses Geräts ersetzt (nur wo lokale Daten vorhanden sind). Fortfahren?')) return;
-        const uploadedStores = await uploadAllStores();
-        const storeId = getStoreId();
-        await downloadStore(storeId);
-        setCloudOk(`Gespeichert: ${uploadedStores.join(', ')}. Geladen: ${STORE_LABELS[storeId] || storeId}.`);
       } catch (e) {
         setCloudErr(e && e.message ? e.message : 'Upload fehlgeschlagen.');
       }
@@ -1004,7 +972,6 @@ window.cloud = {
   getAllowedStoreIds,
   uploadStore,
   downloadStore,
-  uploadAllStores,
   downloadAllStores,
   autoLoadCurrentStore,
   autoLoadAllStores,
@@ -1039,6 +1006,10 @@ document.addEventListener('DOMContentLoaded', async () => {
       if (!allowed.includes(getStoreId())) {
         location.replace('index.html');
         return;
+      }
+      const switchLink = document.getElementById('switchStoreLink');
+      if (switchLink && allowed.length > 1) {
+        switchLink.style.display = '';
       }
     } catch (e) {
       location.replace('index.html');

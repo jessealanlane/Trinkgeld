@@ -46,7 +46,7 @@
         <h1 id="hubTitle">Kaffeesaurus Köln</h1>
       </div>
       <div class="actions">
-        <a class="action-link" href="index.html" id="switchStoreLink">🏙️ Standort wechseln</a>
+        <a class="action-link" href="index.html" id="switchStoreLink" style="display:none">🏙️ Standort wechseln</a>
       </div>
     </div>
 
@@ -82,7 +82,6 @@
       </div>
       <div class="row" id="cloudActionsRow" style="display:none;margin-top:10px">
         <button class="btn ok" id="cloudUploadStoreBtn">☁️ Standort in der Cloud speichern</button>
-        <button class="btn ok" id="cloudUploadAllBtn">☁️ Alle Standorte speichern</button>
       </div>
       <div class="msg err" id="cloudError"></div>
       <div class="msg ok" id="cloudOk"></div>
@@ -154,6 +153,6 @@
       window.location.href=file + '?store=' + encodeURIComponent(storeId) + '&r=' + Date.now();
     }
   </script>
-  <script src="cloud.js?v=22"></script>
+  <script src="cloud.js?v=23"></script>
 </body>
 </html>
