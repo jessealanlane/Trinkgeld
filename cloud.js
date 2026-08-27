@@ -385,6 +385,68 @@ const SHARED_KEYS = [
   'lockedTips'
 ];
 
+const TIPS_SYNC_KEYS = ['tipData', 'dailyCalculations', 'lockedTips'];
+
+function tipStorageKey(storeId, key) {
+  return storeId === 'koeln' ? key : `${storeId}_${key}`;
+}
+
+function localTipRevisionStorageKey(storeId) {
+  return `${String(storeId || getStoreId() || 'koeln').toLowerCase()}_app_state_local_tip_revision`;
+}
+
+function markLocalTipStateModified(storeId) {
+  const sid = String(storeId || getStoreId() || 'koeln').toLowerCase();
+  try {
+    localStorage.setItem(localTipRevisionStorageKey(sid), new Date().toISOString());
+  } catch (e) {}
+}
+
+function markLocalTipStateSynced(storeId, syncedAt) {
+  const sid = String(storeId || getStoreId() || 'koeln').toLowerCase();
+  try {
+    localStorage.setItem(localTipRevisionStorageKey(sid), syncedAt || new Date().toISOString());
+  } catch (e) {}
+}
+
+function getLocalTipStateRevision(storeId) {
+  const sid = String(storeId || getStoreId() || 'koeln').toLowerCase();
+  try {
+    return localStorage.getItem(localTipRevisionStorageKey(sid)) || '';
+  } catch (e) {
+    return '';
+  }
+}
+
+function getCloudStateTimestamp(cloudRow, cloudState) {
+  if (cloudState && cloudState.exportedAt) return String(cloudState.exportedAt);
+  if (cloudRow && cloudRow.updated_at) return String(cloudRow.updated_at);
+  return '';
+}
+
+function isLocalTipStateNewerThanCloud(storeId, cloudRow, cloudState) {
+  const localRev = getLocalTipStateRevision(storeId);
+  if (!localRev) return false;
+  const cloudTs = getCloudStateTimestamp(cloudRow, cloudState);
+  if (!cloudTs) return true;
+  const localMs = Date.parse(localRev);
+  const cloudMs = Date.parse(cloudTs);
+  if (Number.isNaN(localMs)) return false;
+  if (Number.isNaN(cloudMs)) return true;
+  return localMs > cloudMs;
+}
+
+function readLocalStorageKeys(storeId) {
+  const out = {};
+  storeKeySetFor(storeId).forEach(function (k) {
+    try {
+      const v = localStorage.getItem(k);
+      if (v !== null && v !== undefined) out[k] = v;
+    } catch (e) {}
+  });
+  return out;
+}
+
 const KOELN_PREFIX_KEYS = [
   'koeln_employees',
   'koeln_notes',
@@ -463,6 +525,94 @@ function applyStoreState(state) {
   });
 }
 
+function applyStoreStateWithLocalTipMerge(storeId, cloudState, cloudRow) {
+  if (!cloudState || !cloudState.keys || typeof cloudState.keys !== 'object') {
+    return { keptLocalTips: false, applied: false };
+  }
+  const sid = String(storeId || getStoreId() || 'koeln').toLowerCase();
+  const keepLocalTips = isLocalTipStateNewerThanCloud(sid, cloudRow, cloudState);
+
+  if (!keepLocalTips) {
+    applyStoreState(cloudState);
+    markLocalTipStateSynced(sid, getCloudStateTimestamp(cloudRow, cloudState));
+    return { keptLocalTips: false, applied: true };
+  }
+
+  const localSnapshot = readLocalStorageKeys(sid);
+  const mergedKeys = { ...cloudState.keys };
+  TIPS_SYNC_KEYS.forEach(function (key) {
+    const storageKey = tipStorageKey(sid, key);
+    if (localSnapshot[storageKey] !== undefined) {
+      mergedKeys[storageKey] = localSnapshot[storageKey];
+    }
+  });
+
+  applyStoreState({
+    version: cloudState.version || 1,
+    storeId: cloudState.storeId || sid,
+    keys: mergedKeys,
+    exportedAt: cloudState.exportedAt
+  });
+  return { keptLocalTips: true, applied: true };
+}
+
+async function upsertAppStateRow(storeId, state) {
+  const session = await getSession();
+  if (!session) throw new Error('Nicht angemeldet.');
+  const sid = String(storeId || getStoreId() || 'koeln').toLowerCase();
+  const encodedStoreId = encodeURIComponent(sid);
+  const row = { store_id: sid, state: state, updated_at: new Date().toISOString() };
+  const existing = await restRequest(
+    'GET',
+    `/rest/v1/app_state?select=store_id&store_id=eq.${encodedStoreId}&limit=1`,
+    session.access_token
+  );
+  if (Array.isArray(existing) && existing.length > 0) {
+    await restRequest('PATCH', `/rest/v1/app_state?store_id=eq.${encodedStoreId}`, session.access_token, row);
+  } else {
+    await restRequest('POST', '/rest/v1/app_state', session.access_token, row);
+  }
+  return true;
+}
+
+async function syncTipStateToCloud(storeId) {
+  const sid = String(storeId || getStoreId() || 'koeln').toLowerCase();
+  const session = await getSession();
+  if (!session) return { ok: false, reason: 'auth' };
+
+  const allowed = await getAllowedStoreIds();
+  if (allowed.length && !allowed.includes(sid)) return { ok: false, reason: 'access' };
+
+  const rows = await restRequest(
+    'GET',
+    `/rest/v1/app_state?select=state,updated_at&store_id=eq.${encodeURIComponent(sid)}&limit=1`,
+    session.access_token
+  );
+  const cloudRow = Array.isArray(rows) && rows.length > 0 ? rows[0] : null;
+  const cloudState = cloudRow && cloudRow.state ? cloudRow.state : { version: 1, storeId: sid, keys: {} };
+  const cloudKeys = cloudState.keys && typeof cloudState.keys === 'object' ? cloudState.keys : {};
+  const localCollected = collectStoreState(sid);
+  const mergedKeys = { ...cloudKeys };
+
+  TIPS_SYNC_KEYS.forEach(function (key) {
+    const storageKey = tipStorageKey(sid, key);
+    if (localCollected.keys[storageKey] !== undefined) {
+      mergedKeys[storageKey] = localCollected.keys[storageKey];
+    }
+  });
+
+  const newState = {
+    version: 1,
+    storeId: sid,
+    keys: mergedKeys,
+    exportedAt: new Date().toISOString()
+  };
+
+  await upsertAppStateRow(sid, newState);
+  markLocalTipStateSynced(sid, newState.exportedAt);
+  return { ok: true, exportedAt: newState.exportedAt };
+}
+
 async function uploadStore(storeId) {
   const session = await getSession();
   if (!session) throw new Error('Nicht angemeldet.');
@@ -472,6 +622,7 @@ async function uploadStore(storeId) {
   }
   const state = collectStoreState(storeId);
   await replaceAppStateRow(storeId, state);
+  markLocalTipStateSynced(storeId, state.exportedAt);
   try {
     await pushMissingWorkEntries(storeId, parseStoredWorkEntries(storeId, state.keys));
   } catch (e) {}
@@ -482,10 +633,22 @@ async function downloadStore(storeId) {
   const session = await getSession();
   if (!session) throw new Error('Nicht angemeldet.');
   evictOtherStoreData(storeId);
-  const rows = await restRequest('GET', `/rest/v1/app_state?select=state&store_id=eq.${encodeURIComponent(storeId)}&limit=1`, session.access_token);
+  const sid = String(storeId || getStoreId() || 'koeln').toLowerCase();
+  const rows = await restRequest(
+    'GET',
+    `/rest/v1/app_state?select=state,updated_at&store_id=eq.${encodeURIComponent(sid)}&limit=1`,
+    session.access_token
+  );
   const row = Array.isArray(rows) && rows.length > 0 ? rows[0] : null;
-  if (row && row.state) applyStoreState(row.state);
-  return !!(row && row.state);
+  if (!row || !row.state) return false;
+
+  const mergeResult = applyStoreStateWithLocalTipMerge(sid, row.state, row);
+  if (mergeResult.keptLocalTips) {
+    try {
+      await syncTipStateToCloud(sid);
+    } catch (e) {}
+  }
+  return true;
 }
 
 async function uploadAllStores() {
@@ -772,6 +935,8 @@ window.cloud = {
   downloadAllStores,
   autoLoadCurrentStore,
   autoLoadAllStores,
+  syncTipStateToCloud,
+  markLocalTipStateModified,
   fetchWorkEntries,
   upsertWorkEntry,
   upsertWorkEntries,
@@ -805,22 +970,33 @@ document.addEventListener('DOMContentLoaded', async () => {
       return;
     }
   }
-  if (!document.getElementById('cloudStatus')) return;
-  bindCloudUI();
-  await refreshCloudUI();
+  const hasCloudUI = !!document.getElementById('cloudStatus');
+  const onTrinkgeld = /trinkgeld\.html$/i.test(location.pathname);
+  if (!hasCloudUI && !onTrinkgeld) return;
+
+  if (hasCloudUI) {
+    bindCloudUI();
+    await refreshCloudUI();
+  }
+
   try {
     const session = await getSession();
     if (!session) return;
-    const showStatus = isCloudAdmin(session);
+    const showStatus = hasCloudUI && isCloudAdmin(session);
     if (showStatus) setCloudOk('Lade Standort…');
     const current = await autoLoadCurrentStore();
+    if (onTrinkgeld && typeof window.reloadTrinkgeldStoreState === 'function') {
+      window.reloadTrinkgeldStoreState();
+    }
     if (showStatus) {
       setCloudOk(current.found
         ? `Geladen: ${STORE_LABELS[current.storeId] || current.storeId}.`
         : `Keine Cloud-Daten für ${STORE_LABELS[current.storeId] || current.storeId}.`);
     }
   } catch (e) {
-    setCloudErr(e && e.message ? e.message : 'Automatisches Laden fehlgeschlagen.');
+    if (hasCloudUI) {
+      setCloudErr(e && e.message ? e.message : 'Automatisches Laden fehlgeschlagen.');
+    }
   }
 });
 })();

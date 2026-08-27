@@ -1480,7 +1480,7 @@
         </div>
     </div>
 
-    <script src="cloud.js?v=18"></script>
+    <script src="cloud.js?v=19"></script>
     <script>
         (function(){
             function getStoreFromURL(){
@@ -1964,6 +1964,49 @@
                 ? 'Eintrag wurde lokal aktualisiert. Cloud-Speichern fehlgeschlagen.'
                 : 'Eintrag wurde lokal gespeichert. Cloud-Speichern fehlgeschlagen.';
         }
+
+        let tipCloudSyncPromise = null;
+
+        function markTipStateModifiedLocally() {
+            if (window.cloud && typeof window.cloud.markLocalTipStateModified === 'function') {
+                window.cloud.markLocalTipStateModified(currentStoreId());
+            }
+        }
+
+        async function syncSavedTipState() {
+            markTipStateModifiedLocally();
+            if (!window.cloud || typeof window.cloud.syncTipStateToCloud !== 'function') {
+                return { ok: false, reason: 'unavailable' };
+            }
+            if (tipCloudSyncPromise) return tipCloudSyncPromise;
+            tipCloudSyncPromise = window.cloud.syncTipStateToCloud(currentStoreId())
+                .catch(function (error) {
+                    return { ok: false, error: error };
+                })
+                .finally(function () {
+                    tipCloudSyncPromise = null;
+                });
+            return tipCloudSyncPromise;
+        }
+
+        function tipSaveMessage(baseMessage, sync) {
+            if (!baseMessage) return baseMessage;
+            if (sync && sync.ok) {
+                return `${baseMessage} Cloud synchronisiert.`;
+            }
+            if (sync && sync.reason === 'auth') {
+                return `${baseMessage} (Cloud-Anmeldung erforderlich für Sync.)`;
+            }
+            if (sync && sync.reason === 'unavailable') {
+                return baseMessage;
+            }
+            return `${baseMessage} Lokal gespeichert. Cloud-Synchronisation fehlgeschlagen.`;
+        }
+
+        window.reloadTrinkgeldStoreState = function () {
+            tipData = JSON.parse(localStorage.getItem('tipData') || '{}');
+            dailyCalculations = JSON.parse(localStorage.getItem('dailyCalculations') || '{}');
+        };
         let dailyCalculations = JSON.parse(localStorage.getItem('dailyCalculations') || '{}');
         let tipData = JSON.parse(localStorage.getItem('tipData') || '{}');
         
@@ -9906,6 +9949,8 @@
                 localStorage.setItem('dailyCalculations', JSON.stringify(dailyCalculations));
             }
 
+            markTipStateModifiedLocally();
+
             if (lockAfterSave) {
                 const lockedTips = JSON.parse(localStorage.getItem('lockedTips') || '{}');
                 lockedTips[date] = true;
@@ -9925,14 +9970,21 @@
             };
         }
 
-        function saveWeeklyTipsOverviewRow(date) {
+        async function saveWeeklyTipsOverviewRow(date) {
             const result = persistWeeklyTipsOverviewRow(date);
-            if (result.message) {
-                showMessage(result.message, result.type || (result.success ? 'success' : 'warning'));
+            if (!result.message) return;
+            if (!result.success) {
+                showMessage(result.message, result.type || 'warning');
+                return;
             }
+            const sync = await syncSavedTipState();
+            showMessage(
+                tipSaveMessage(result.message, sync),
+                sync && sync.ok ? 'success' : (sync && sync.reason === 'auth' ? 'success' : 'warning')
+            );
         }
 
-        function saveAllWeeklyTipsOverviewChanges() {
+        async function saveAllWeeklyTipsOverviewChanges() {
             const dirtyDates = getRenderedWeeklyTipDates().filter(date => {
                 const button = document.getElementById(`weeklyTipSave_${date}`);
                 return button?.dataset.editable === 'true' && isWeeklyTipRowDirty(date);
@@ -9952,11 +10004,13 @@
             }
 
             renderWeeklyTipsOverview();
+            const baseMessage = isAdmin()
+                ? `${dirtyDates.length} geänderte Trinkgeld-Einträge wurden gespeichert und gesperrt.`
+                : `${dirtyDates.length} geänderte Trinkgeld-Einträge wurden gespeichert.`;
+            const sync = await syncSavedTipState();
             showMessage(
-                isAdmin()
-                    ? `${dirtyDates.length} geänderte Trinkgeld-Einträge wurden gespeichert und gesperrt.`
-                    : `${dirtyDates.length} geänderte Trinkgeld-Einträge wurden gespeichert.`,
-                'success'
+                tipSaveMessage(baseMessage, sync),
+                sync && sync.ok ? 'success' : (sync && sync.reason === 'auth' ? 'success' : 'warning')
             );
         }
 
@@ -13162,8 +13216,15 @@
             
             // Update UI
             updateTipsLockUI();
-            
-            showMessage('✅ Trinkgelder wurden gespeichert und gesperrt. Nur Administratoren können diese jetzt ändern.', 'success');
+
+            markTipStateModifiedLocally();
+            syncSavedTipState().then(function (sync) {
+                const baseMessage = '✅ Trinkgelder wurden gespeichert und gesperrt. Nur Administratoren können diese jetzt ändern.';
+                showMessage(
+                    tipSaveMessage(baseMessage, sync),
+                    sync && sync.ok ? 'success' : (sync && sync.reason === 'auth' ? 'success' : 'warning')
+                );
+            });
         }
         
         async function unlockTips() {
