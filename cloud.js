@@ -407,12 +407,7 @@ const STORE_SPECIFIC_SYNC_KEYS = [
 ];
 
 function autoSyncStorageKeys(storeId) {
-  const sid = String(storeId || getStoreId() || 'koeln').toLowerCase();
-  const keys = TIPS_SYNC_KEYS.concat(SETTINGS_SYNC_KEYS);
-  STORE_SPECIFIC_SYNC_KEYS.forEach(function (key) {
-    keys.push(sid === 'koeln' ? key : key.replace(/^koeln_/, `${sid}_`));
-  });
-  return keys;
+  return TIPS_SYNC_KEYS.concat(SETTINGS_SYNC_KEYS).concat(STORE_SPECIFIC_SYNC_KEYS);
 }
 
 function appStateStorageKey(storeId, key) {
@@ -606,8 +601,9 @@ function applyStoreStateWithLocalMerge(storeId, cloudState, cloudRow) {
   const localSnapshot = readLocalStorageKeys(sid);
   const mergedKeys = { ...cloudState.keys };
   autoSyncStorageKeys(sid).forEach(function (key) {
-    if (localSnapshot[key] !== undefined) {
-      mergedKeys[key] = localSnapshot[key];
+    const storageKey = appStateStorageKey(sid, key);
+    if (localSnapshot[storageKey] !== undefined) {
+      mergedKeys[storageKey] = localSnapshot[storageKey];
     }
   });
 
@@ -668,8 +664,9 @@ async function syncAppStateToCloud(storeId) {
   const mergedKeys = { ...cloudKeys };
 
   autoSyncStorageKeys(sid).forEach(function (key) {
-    if (localCollected.keys[key] !== undefined) {
-      mergedKeys[key] = localCollected.keys[key];
+    const storageKey = appStateStorageKey(sid, key);
+    if (localCollected.keys[storageKey] !== undefined) {
+      mergedKeys[storageKey] = localCollected.keys[storageKey];
     }
   });
 
