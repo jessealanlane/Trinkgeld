@@ -1480,7 +1480,7 @@
         </div>
     </div>
 
-    <script src="cloud.js?v=21"></script>
+    <script src="cloud.js?v=22"></script>
     <script>
         (function(){
             function getStoreFromURL(){
@@ -1569,15 +1569,6 @@
             return isCropStore() ? 'Küche & Bäckerei' : 'Küche';
         }
 
-        (function(){
-            var s=(localStorage.getItem('current_store')||'koeln').toLowerCase();
-            var has=localStorage.getItem(s+'_gate_hash');
-            var ok=sessionStorage.getItem('gate_unlocked_'+s)==='1';
-            if(has && !ok){
-                var q='hub.html?store='+encodeURIComponent(s);
-                location.replace(q);
-            }
-        })();
         document.addEventListener('DOMContentLoaded', function(){
             var hubLink = document.querySelector('.header a');
             if(hubLink){
