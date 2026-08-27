@@ -29,6 +29,7 @@ function getStoreId() {
 }
 
 const SESSION_STORAGE_KEY = 'cloud_supabase_session_v1';
+const CLOUD_ADMIN_EMAIL = 'jessealanlane@gmail.com';
 
 function nowSeconds() {
   return Math.floor(Date.now() / 1000);
@@ -61,6 +62,10 @@ function getSessionUserEmail(session) {
   if (session.user && session.user.email) return String(session.user.email);
   if (session.user && session.user.user_metadata && session.user.user_metadata.email) return String(session.user.user_metadata.email);
   return '';
+}
+
+function isCloudAdmin(session) {
+  return getSessionUserEmail(session).trim().toLowerCase() === CLOUD_ADMIN_EMAIL;
 }
 
 async function supabaseAuthRequest(pathWithQuery, bodyObj) {
@@ -461,6 +466,7 @@ function applyStoreState(state) {
 async function uploadStore(storeId) {
   const session = await getSession();
   if (!session) throw new Error('Nicht angemeldet.');
+  if (!isCloudAdmin(session)) throw new Error('Nur der Administrator darf Cloud-Daten speichern.');
   if (!hasLocalDataForStore(storeId)) {
     throw new Error(`Keine lokalen Daten für ${storeId} gefunden. Upload abgebrochen.`);
   }
@@ -517,10 +523,13 @@ async function refreshCloudUI() {
     session = await getSession();
   } catch (e) {}
   const isLoggedIn = !!session;
+  const admin = isCloudAdmin(session);
+  const panel = document.getElementById('cloudPanel');
+  if (panel) panel.style.display = admin ? '' : 'none';
   setText('cloudStatus', isLoggedIn ? `Angemeldet: ${getSessionUserEmail(session)}` : 'Nicht angemeldet');
-  setVisible('cloudLoginRow', !isLoggedIn);
-  setVisible('cloudLoggedInRow', isLoggedIn);
-  setVisible('cloudActionsRow', isLoggedIn);
+  setVisible('cloudLoginRow', !isLoggedIn && admin);
+  setVisible('cloudLoggedInRow', isLoggedIn && admin);
+  setVisible('cloudActionsRow', isLoggedIn && admin);
 }
 
 function setCloudErr(msg) {
@@ -683,11 +692,14 @@ document.addEventListener('DOMContentLoaded', async () => {
   try {
     const session = await getSession();
     if (!session) return;
-    setCloudOk('Lade Standort…');
+    const showStatus = isCloudAdmin(session);
+    if (showStatus) setCloudOk('Lade Standort…');
     const current = await autoLoadCurrentStore();
-    setCloudOk(current.found
-      ? `Geladen: ${STORE_LABELS[current.storeId] || current.storeId}.`
-      : `Keine Cloud-Daten für ${STORE_LABELS[current.storeId] || current.storeId}.`);
+    if (showStatus) {
+      setCloudOk(current.found
+        ? `Geladen: ${STORE_LABELS[current.storeId] || current.storeId}.`
+        : `Keine Cloud-Daten für ${STORE_LABELS[current.storeId] || current.storeId}.`);
+    }
   } catch (e) {
     setCloudErr(e && e.message ? e.message : 'Automatisches Laden fehlgeschlagen.');
   }
