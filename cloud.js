@@ -643,6 +643,123 @@ function bindCloudUI() {
   }
 }
 
+async function changePassword(oldPassword, newPassword, newPasswordRepeat) {
+  const oldPw = String(oldPassword || '');
+  const next = String(newPassword || '');
+  const again = String(newPasswordRepeat || '');
+  if (!oldPw || !next || !again) throw new Error('Bitte alle Felder ausfüllen.');
+  if (next !== again) throw new Error('Die neuen Passwörter stimmen nicht überein.');
+  if (next.length < 6) throw new Error('Das neue Passwort muss mindestens 6 Zeichen haben.');
+  if (next === oldPw) throw new Error('Das neue Passwort muss sich vom aktuellen unterscheiden.');
+
+  const session = await getSession();
+  const email = getSessionUserEmail(session).trim();
+  if (!session || !email) throw new Error('Nicht angemeldet.');
+
+  let verified = null;
+  try {
+    verified = await signIn(email, oldPw);
+  } catch (e) {
+    throw new Error('Aktuelles Passwort ist falsch.');
+  }
+
+  const res = await fetch(`${SUPABASE_URL}/auth/v1/user`, {
+    method: 'PUT',
+    headers: {
+      apikey: SUPABASE_ANON_KEY,
+      Authorization: `Bearer ${verified.access_token}`,
+      'Content-Type': 'application/json'
+    },
+    body: JSON.stringify({ password: next })
+  });
+  const data = await res.json().catch(() => null);
+  if (!res.ok) {
+    const msg = data && (data.msg || data.message || data.error_description || data.error)
+      ? (data.msg || data.message || data.error_description || data.error)
+      : `HTTP ${res.status}`;
+    throw new Error(msg);
+  }
+
+  await signIn(email, next);
+  return true;
+}
+
+function bindPasswordChangeUI() {
+  const openBtn = document.getElementById('changePasswordBtn');
+  const modal = document.getElementById('passwordModal');
+  const saveBtn = document.getElementById('pwSaveBtn');
+  const cancelBtn = document.getElementById('pwCancelBtn');
+  const errEl = document.getElementById('pwError');
+  const okEl = document.getElementById('pwOk');
+  if (!openBtn || !modal) return;
+
+  const oldEl = document.getElementById('pwOld');
+  const newEl = document.getElementById('pwNew');
+  const againEl = document.getElementById('pwNew2');
+
+  function setPwErr(msg) {
+    if (!errEl) return;
+    errEl.textContent = msg || '';
+    errEl.style.display = msg ? 'block' : 'none';
+  }
+  function setPwOk(msg) {
+    if (!okEl) return;
+    okEl.textContent = msg || '';
+    okEl.style.display = msg ? 'block' : 'none';
+  }
+  function clearPwFields() {
+    if (oldEl) oldEl.value = '';
+    if (newEl) newEl.value = '';
+    if (againEl) againEl.value = '';
+    setPwErr('');
+    setPwOk('');
+  }
+  function openPwModal() {
+    clearPwFields();
+    modal.classList.add('open');
+    modal.setAttribute('aria-hidden', 'false');
+    if (oldEl) oldEl.focus();
+  }
+  function closePwModal() {
+    modal.classList.remove('open');
+    modal.setAttribute('aria-hidden', 'true');
+    clearPwFields();
+  }
+
+  openBtn.addEventListener('click', function (e) {
+    e.preventDefault();
+    openPwModal();
+  });
+  if (cancelBtn) cancelBtn.addEventListener('click', closePwModal);
+  modal.addEventListener('click', function (e) {
+    if (e.target === modal) closePwModal();
+  });
+  document.addEventListener('keydown', function (e) {
+    if (e.key === 'Escape' && modal.classList.contains('open')) closePwModal();
+  });
+  if (againEl) {
+    againEl.addEventListener('keydown', function (e) {
+      if (e && e.key === 'Enter' && saveBtn) saveBtn.click();
+    });
+  }
+  if (saveBtn) {
+    saveBtn.addEventListener('click', async function () {
+      setPwErr('');
+      setPwOk('');
+      saveBtn.disabled = true;
+      try {
+        await changePassword(oldEl && oldEl.value, newEl && newEl.value, againEl && againEl.value);
+        setPwOk('Passwort wurde in der Cloud gespeichert.');
+        setTimeout(closePwModal, 900);
+      } catch (e) {
+        setPwErr(e && e.message ? e.message : 'Passwort konnte nicht geändert werden.');
+      } finally {
+        saveBtn.disabled = false;
+      }
+    });
+  }
+}
+
 window.cloud = {
   signIn,
   signOut,
@@ -663,11 +780,13 @@ window.cloud = {
   seedWorkEntriesIfEmpty,
   pushMissingWorkEntries,
   fetchDeletedWorkEntryIds,
+  changePassword,
   STORE_LABELS,
   ALL_STORE_IDS
 };
 
 document.addEventListener('DOMContentLoaded', async () => {
+  bindPasswordChangeUI();
   const onHub = /hub\.html$/i.test(location.pathname) || document.getElementById('hubTitle');
   if (onHub) {
     try {
