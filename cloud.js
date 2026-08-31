@@ -17,10 +17,12 @@ function getStoreIdFromUrl() {
 }
 
 function getStoreId() {
+  try {
+    if (window.__store_id) return String(window.__store_id).toLowerCase();
+  } catch (e) {}
   const urlStore = getStoreIdFromUrl();
   if (urlStore) return urlStore;
   try {
-    if (window.__store_id) return String(window.__store_id).toLowerCase();
     const s = sessionStorage.getItem('current_store') || localStorage.getItem('current_store');
     return String(s || 'koeln').toLowerCase();
   } catch (e) {
@@ -943,28 +945,68 @@ async function uploadStore(storeId) {
   return true;
 }
 
+function applyStaffBundle(storeId, bundle) {
+  if (!bundle || typeof bundle !== 'object') return false;
+  const sid = String(storeId || getStoreId() || 'koeln').toLowerCase();
+  let applied = false;
+  function put(logical, value) {
+    if (value === null || value === undefined) return;
+    const str = typeof value === 'string' ? value : valueToStorageString(value);
+    if (str === null || str === '') return;
+    rawSet(appStateStorageKey(sid, logical), str);
+    applied = true;
+  }
+  put('koeln_employees', bundle.employees);
+  put('koeln_lastWorkDate', bundle.lastWorkDate);
+  put('departments', bundle.departments);
+  put('koeln_personalTipsTimeout', bundle.timeout);
+  put('accessControlSettings', bundle.accessControl);
+  return applied;
+}
+
+async function fetchStoreStaffBundle(storeId, session) {
+  return await restRequest(
+    'POST',
+    '/rest/v1/rpc/get_store_staff_bundle',
+    session.access_token,
+    { p_store_id: String(storeId || getStoreId() || 'koeln').toLowerCase() }
+  );
+}
+
 async function downloadStore(storeId) {
   const session = await getSession();
   if (!session) throw new Error('Nicht angemeldet.');
   const sid = String(storeId || getStoreId() || 'koeln').toLowerCase();
-  const rows = await restRequest(
-    'GET',
-    `/rest/v1/app_state?select=state,updated_at&store_id=eq.${encodeURIComponent(sid)}&limit=1`,
-    session.access_token
-  );
-  const row = Array.isArray(rows) && rows.length > 0 ? rows[0] : null;
-  if (!row || !row.state) return false;
+  let found = false;
 
-  const mergeResult = applyStoreStateWithLocalMerge(sid, row.state, row);
   try {
-    await syncTipStateToCloud(sid);
+    const bundle = await fetchStoreStaffBundle(sid, session);
+    if (applyStaffBundle(sid, bundle)) found = true;
   } catch (e) {}
-  if (mergeResult.keptLocalChanges && isCloudAdmin(session)) {
-    try {
-      await syncAppStateToCloud(sid);
-    } catch (e) {}
+
+  try {
+    const rows = await restRequest(
+      'GET',
+      `/rest/v1/app_state?select=state,updated_at&store_id=eq.${encodeURIComponent(sid)}&limit=1`,
+      session.access_token
+    );
+    const row = Array.isArray(rows) && rows.length > 0 ? rows[0] : null;
+    if (row && row.state) {
+      const mergeResult = applyStoreStateWithLocalMerge(sid, row.state, row);
+      try {
+        await syncTipStateToCloud(sid);
+      } catch (e) {}
+      if (mergeResult.keptLocalChanges && isCloudAdmin(session)) {
+        try {
+          await syncAppStateToCloud(sid);
+        } catch (e) {}
+      }
+      found = true;
+    }
+  } catch (e) {
+    if (!found) throw e;
   }
-  return true;
+  return found;
 }
 
 async function downloadAllStores() {
@@ -1229,6 +1271,7 @@ window.cloud = {
   pushMissingWorkEntries,
   fetchDeletedWorkEntryIds,
   changePassword,
+  rawGet,
   STORE_LABELS,
   ALL_STORE_IDS
 };

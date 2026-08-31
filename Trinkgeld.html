@@ -1480,7 +1480,7 @@
         </div>
     </div>
 
-    <script src="cloud.js?v=28"></script>
+    <script src="cloud.js?v=29"></script>
     <script>
         (function(){
             function getStoreFromURL(){
@@ -1523,9 +1523,9 @@
             document.title = storeDisplay;
             var headingEl = document.getElementById('storeHeading');
             if(headingEl){ headingEl.textContent = storeDisplay; }
-            const origGet=localStorage.getItem.bind(localStorage);
-            const origSet=localStorage.setItem.bind(localStorage);
-            const origRem=localStorage.removeItem.bind(localStorage);
+            const innerGet = localStorage.getItem;
+            const innerSet = localStorage.setItem;
+            const innerRem = localStorage.removeItem;
             const SHARED_PREFIX_KEYS=new Set([
                 'departments','workEntries','dailyCalculations','tipData','tipPaymentPeriods',
                 'kitchenProcedureSettings','spuelerProcedureSettings','baristaProcedureSettings',
@@ -1533,14 +1533,15 @@
                 'tipProcedureSettings','accessControlSettings','lockedTips'
             ]);
             function mapKey(k){
+                k = String(k || '');
                 if(k.startsWith('koeln_')) return STORE==='koeln'? k : k.replace(/^koeln_/, STORE+'_');
                 if(SHARED_PREFIX_KEYS.has(k)) return STORE==='koeln'? k : (STORE+'_'+k);
                 return k;
             }
-            localStorage.getItem=function(k){ return origGet(mapKey(k)); };
-            localStorage.setItem=function(k,v){ return origSet(mapKey(k), v); };
-            localStorage.removeItem=function(k){ return origRem(mapKey(k)); };
-            window.__rawLocalStorageGetItem = function(k){ return origGet(k); };
+            localStorage.getItem=function(k){ return innerGet.call(localStorage, mapKey(k)); };
+            localStorage.setItem=function(k,v){ return innerSet.call(localStorage, mapKey(k), v); };
+            localStorage.removeItem=function(k){ return innerRem.call(localStorage, mapKey(k)); };
+            window.__rawLocalStorageGetItem = function(k){ return innerGet.call(localStorage, k); };
             window.__store_id = STORE;
             window.__store_hasUrl = !!urlStore;
             window.__store_hadStored = hadStored;
@@ -2077,9 +2078,39 @@
         }
 
         window.reloadTrinkgeldStoreState = function () {
+            const storeId = String(window.__store_id || 'koeln').toLowerCase();
+            const sharedKeys = ['departments','workEntries','dailyCalculations','tipData','tipPaymentPeriods',
+                'kitchenProcedureSettings','spuelerProcedureSettings','baristaProcedureSettings',
+                'tipProcedurePeriods','punctuality_enabled','punctualityPeriods',
+                'tipProcedureSettings','accessControlSettings','lockedTips'];
+            function cafeKey(logical) {
+                const k = String(logical || '');
+                if (k.startsWith('koeln_')) return storeId === 'koeln' ? k : k.replace(/^koeln_/, storeId + '_');
+                if (sharedKeys.indexOf(k) !== -1) return storeId === 'koeln' ? k : storeId + '_' + k;
+                return k;
+            }
+            function readRaw(logical) {
+                const keys = [cafeKey(logical)];
+                if (keys[0] !== logical) keys.push(logical);
+                const getters = [
+                    function (k) { return localStorage.getItem(k); },
+                    function (k) { return window.__rawLocalStorageGetItem ? window.__rawLocalStorageGetItem(k) : null; },
+                    function (k) { return window.cloud && typeof window.cloud.rawGet === 'function' ? window.cloud.rawGet(k) : null; },
+                    function (k) { return Storage.prototype.getItem.call(localStorage, k); }
+                ];
+                for (let i = 0; i < keys.length; i++) {
+                    for (let g = 0; g < getters.length; g++) {
+                        try {
+                            const v = getters[g](keys[i]);
+                            if (v !== null && v !== undefined && v !== '') return v;
+                        } catch (e) {}
+                    }
+                }
+                return null;
+            }
             function readJson(key, fallback) {
                 try {
-                    const raw = localStorage.getItem(key);
+                    const raw = readRaw(key);
                     if (raw === null || raw === undefined || raw === '') return fallback;
                     return JSON.parse(raw);
                 } catch (e) {
@@ -2090,17 +2121,6 @@
                 const loadedEmployees = readJson('koeln_employees', null);
                 if (loadedEmployees && typeof loadedEmployees === 'object') {
                     EMPLOYEES = loadedEmployees;
-                }
-            } catch (e) {}
-            try {
-                const lastWork = localStorage.getItem('koeln_lastWorkDate');
-                if (lastWork && /^\d{4}-\d{2}-\d{2}$/.test(lastWork)) {
-                    const workDateEl = document.getElementById('workDate');
-                    const tipsDateEl = document.getElementById('tipsDate1');
-                    if (workDateEl) workDateEl.value = lastWork;
-                    if (tipsDateEl) tipsDateEl.value = lastWork;
-                    const monthSelect = document.getElementById('monthSelect');
-                    if (monthSelect) monthSelect.value = lastWork.substring(0, 7);
                 }
             } catch (e) {}
             try { if (typeof populateEmployeeDropdown === 'function') populateEmployeeDropdown(); } catch (e) {}
