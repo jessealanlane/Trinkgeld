@@ -1480,7 +1480,7 @@
         </div>
     </div>
 
-    <script src="cloud.js?v=31"></script>
+    <script src="cloud.js?v=32"></script>
     <script>
         (function(){
             function getStoreFromURL(){
@@ -1542,6 +1542,33 @@
             localStorage.setItem=function(k,v){ return innerSet.call(localStorage, mapKey(k), v); };
             localStorage.removeItem=function(k){ return innerRem.call(localStorage, mapKey(k)); };
             window.__rawLocalStorageGetItem = function(k){ return innerGet.call(localStorage, k); };
+            window.__cafeStorageKey = mapKey;
+            window.__readCafeItem = function(logical){
+                const mapped = mapKey(logical);
+                const keys = mapped === logical ? [logical] : [mapped, logical];
+                const getters = [
+                    function(k){ return localStorage.getItem(k); },
+                    function(k){ return innerGet.call(localStorage, k); },
+                    function(k){ return window.cloud && typeof window.cloud.rawGet === 'function' ? window.cloud.rawGet(k) : null; },
+                    function(k){ return Storage.prototype.getItem.call(localStorage, k); }
+                ];
+                for (let i = 0; i < keys.length; i++) {
+                    for (let g = 0; g < getters.length; g++) {
+                        try {
+                            const v = getters[g](keys[i]);
+                            if (v !== null && v !== undefined && v !== '') return v;
+                        } catch (e) {}
+                    }
+                }
+                return null;
+            };
+            window.__writeCafeItem = function(logical, value){
+                const mapped = mapKey(logical);
+                const str = value == null ? '' : String(value);
+                try { localStorage.setItem(logical, str); } catch (e) {}
+                try { innerSet.call(localStorage, mapped, str); } catch (e) {}
+                try { if (window.cloud && typeof window.cloud.rawSet === 'function') window.cloud.rawSet(mapped, str); } catch (e) {}
+            };
             window.__store_id = STORE;
             window.__store_hasUrl = !!urlStore;
             window.__store_hadStored = hadStored;
@@ -3071,9 +3098,14 @@
         
         function loadAccessControlSettings() {
             try {
-                const raw = localStorage.getItem('accessControlSettings');
+                const raw = (typeof window.__readCafeItem === 'function'
+                    ? window.__readCafeItem('accessControlSettings')
+                    : localStorage.getItem('accessControlSettings'));
                 if (!raw) return { ...DEFAULT_ACCESS_CONTROL };
-                const parsed = JSON.parse(raw);
+                const parsed = typeof raw === 'string' ? JSON.parse(raw) : raw;
+                if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) {
+                    return { ...DEFAULT_ACCESS_CONTROL };
+                }
                 return { ...DEFAULT_ACCESS_CONTROL, ...parsed };
             } catch (e) {
                 console.error('Fehler beim Laden der Zugriffssteuerungseinstellungen:', e);
@@ -3083,7 +3115,12 @@
         
         function saveAccessControlSettingsToStorage(settings) {
             try {
-                localStorage.setItem('accessControlSettings', JSON.stringify(settings));
+                const raw = JSON.stringify(settings);
+                if (typeof window.__writeCafeItem === 'function') {
+                    window.__writeCafeItem('accessControlSettings', raw);
+                } else {
+                    localStorage.setItem('accessControlSettings', raw);
+                }
                 queueAppStateCloudSync();
             } catch (e) {
                 console.error('Fehler beim Speichern der Zugriffssteuerungseinstellungen:', e);
