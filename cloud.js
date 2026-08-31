@@ -153,7 +153,7 @@ async function restRequest(method, pathWithQuery, accessToken, bodyObj, extraHea
   };
   if (accessToken) headers.Authorization = `Bearer ${accessToken}`;
   if (bodyObj !== undefined) headers['Content-Type'] = 'application/json';
-  if (method !== 'GET') {
+  if (method !== 'GET' && String(pathWithQuery || '').indexOf('/rpc/') === -1) {
     headers.Prefer = 'return=minimal';
   }
   if (extraHeaders && typeof extraHeaders === 'object') {
@@ -174,10 +174,40 @@ async function restRequest(method, pathWithQuery, accessToken, bodyObj, extraHea
     throw new Error(msg);
   }
 
-  if (method === 'GET') {
+  if (method === 'GET' || String(pathWithQuery || '').indexOf('/rpc/') !== -1) {
     return await res.json().catch(() => null);
   }
   return null;
+}
+
+function parseStoredJsonObject(raw) {
+  if (!raw) return {};
+  if (typeof raw === 'object' && !Array.isArray(raw)) return raw;
+  try {
+    const parsed = JSON.parse(String(raw));
+    if (parsed && typeof parsed === 'object' && !Array.isArray(parsed)) return parsed;
+  } catch (e) {}
+  return {};
+}
+
+function mergeStoredJsonObjects(cloudRaw, localRaw) {
+  const cloudObj = parseStoredJsonObject(cloudRaw);
+  const localObj = parseStoredJsonObject(localRaw);
+  const merged = Object.assign({}, cloudObj);
+  Object.keys(localObj).forEach(function (date) {
+    const incoming = localObj[date];
+    const current = merged[date];
+    if (current == null) {
+      merged[date] = incoming;
+      return;
+    }
+    const inTs = incoming && typeof incoming === 'object' ? String(incoming.timestamp || '') : '';
+    const curTs = current && typeof current === 'object' ? String(current.timestamp || '') : '';
+    if (inTs && (!curTs || inTs >= curTs)) {
+      merged[date] = incoming;
+    }
+  });
+  return JSON.stringify(merged);
 }
 
 async function replaceAppStateRow(storeId, state) {
@@ -591,21 +621,31 @@ function applyStoreStateWithLocalMerge(storeId, cloudState, cloudRow) {
   }
   const sid = String(storeId || getStoreId() || 'koeln').toLowerCase();
   const keepLocalChanges = isLocalAppStateNewerThanCloud(sid, cloudRow, cloudState);
-
-  if (!keepLocalChanges) {
-    applyStoreState(cloudState);
-    markLocalAppStateSynced(sid, getCloudStateTimestamp(cloudRow, cloudState));
-    return { keptLocalChanges: false, applied: true };
-  }
-
   const localSnapshot = readLocalStorageKeys(sid);
   const mergedKeys = { ...cloudState.keys };
-  autoSyncStorageKeys(sid).forEach(function (key) {
+
+  TIPS_SYNC_KEYS.forEach(function (key) {
     const storageKey = appStateStorageKey(sid, key);
-    if (localSnapshot[storageKey] !== undefined) {
-      mergedKeys[storageKey] = localSnapshot[storageKey];
+    const localRaw = localSnapshot[storageKey];
+    if (localRaw === undefined) return;
+    if (key === 'lockedTips') {
+      const cloudLocks = parseStoredJsonObject(cloudState.keys[storageKey]);
+      const localLocks = parseStoredJsonObject(localRaw);
+      mergedKeys[storageKey] = JSON.stringify(Object.assign({}, cloudLocks, localLocks));
+    } else {
+      mergedKeys[storageKey] = mergeStoredJsonObjects(cloudState.keys[storageKey], localRaw);
     }
   });
+
+  if (keepLocalChanges) {
+    autoSyncStorageKeys(sid).forEach(function (key) {
+      if (TIPS_SYNC_KEYS.indexOf(key) !== -1) return;
+      const storageKey = appStateStorageKey(sid, key);
+      if (localSnapshot[storageKey] !== undefined) {
+        mergedKeys[storageKey] = localSnapshot[storageKey];
+      }
+    });
+  }
 
   applyStoreState({
     version: cloudState.version || 1,
@@ -613,7 +653,10 @@ function applyStoreStateWithLocalMerge(storeId, cloudState, cloudRow) {
     keys: mergedKeys,
     exportedAt: cloudState.exportedAt
   });
-  return { keptLocalChanges: true, applied: true };
+  if (!keepLocalChanges) {
+    markLocalAppStateSynced(sid, getCloudStateTimestamp(cloudRow, cloudState));
+  }
+  return { keptLocalChanges: keepLocalChanges, applied: true };
 }
 
 function applyStoreStateWithLocalTipMerge(storeId, cloudState, cloudRow) {
@@ -665,7 +708,10 @@ async function syncAppStateToCloud(storeId) {
 
   autoSyncStorageKeys(sid).forEach(function (key) {
     const storageKey = appStateStorageKey(sid, key);
-    if (localCollected.keys[storageKey] !== undefined) {
+    if (localCollected.keys[storageKey] === undefined) return;
+    if (TIPS_SYNC_KEYS.indexOf(key) !== -1) {
+      mergedKeys[storageKey] = mergeStoredJsonObjects(cloudKeys[storageKey], localCollected.keys[storageKey]);
+    } else {
       mergedKeys[storageKey] = localCollected.keys[storageKey];
     }
   });
@@ -683,7 +729,33 @@ async function syncAppStateToCloud(storeId) {
 }
 
 async function syncTipStateToCloud(storeId) {
-  return syncAppStateToCloud(storeId);
+  const sid = String(storeId || getStoreId() || 'koeln').toLowerCase();
+  const session = await getSession();
+  if (!session) return { ok: false, reason: 'auth' };
+
+  const allowed = await getAllowedStoreIds();
+  if (allowed.length && !allowed.includes(sid)) return { ok: false, reason: 'access' };
+
+  const localCollected = collectStoreState(sid);
+  const tipKey = appStateStorageKey(sid, 'tipData');
+  const calcKey = appStateStorageKey(sid, 'dailyCalculations');
+  const lockKey = appStateStorageKey(sid, 'lockedTips');
+
+  const result = await restRequest(
+    'POST',
+    '/rest/v1/rpc/merge_store_tip_keys',
+    session.access_token,
+    {
+      p_store_id: sid,
+      p_tip_data: parseStoredJsonObject(localCollected.keys[tipKey]),
+      p_daily_calculations: parseStoredJsonObject(localCollected.keys[calcKey]),
+      p_locked_tips: parseStoredJsonObject(localCollected.keys[lockKey])
+    }
+  );
+
+  const exportedAt = result && result.exportedAt ? result.exportedAt : new Date().toISOString();
+  markLocalTipStateSynced(sid, exportedAt);
+  return { ok: true, exportedAt: exportedAt };
 }
 
 async function uploadStore(storeId) {
@@ -716,7 +788,10 @@ async function downloadStore(storeId) {
   if (!row || !row.state) return false;
 
   const mergeResult = applyStoreStateWithLocalMerge(sid, row.state, row);
-  if (mergeResult.keptLocalChanges) {
+  try {
+    await syncTipStateToCloud(sid);
+  } catch (e) {}
+  if (mergeResult.keptLocalChanges && isCloudAdmin(session)) {
     try {
       await syncAppStateToCloud(sid);
     } catch (e) {}

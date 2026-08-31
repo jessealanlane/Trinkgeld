@@ -1480,7 +1480,7 @@
         </div>
     </div>
 
-    <script src="cloud.js?v=24"></script>
+    <script src="cloud.js?v=25"></script>
     <script>
         (function(){
             function getStoreFromURL(){
@@ -1984,6 +1984,8 @@
 
         let appStateCloudSyncPromise = null;
         let appStateCloudSyncTimer = null;
+        let tipStateCloudSyncPromise = null;
+        let tipStateCloudSyncTimer = null;
 
         function markAppStateModifiedLocally() {
             if (window.cloud && typeof window.cloud.markLocalAppStateModified === 'function') {
@@ -1994,13 +1996,16 @@
         }
 
         function markTipStateModifiedLocally() {
-            markAppStateModifiedLocally();
+            if (window.cloud && typeof window.cloud.markLocalTipStateModified === 'function') {
+                window.cloud.markLocalTipStateModified(currentStoreId());
+            } else {
+                markAppStateModifiedLocally();
+            }
         }
 
         async function syncSavedAppState() {
             markAppStateModifiedLocally();
-            const syncFn = (window.cloud && window.cloud.syncAppStateToCloud)
-                || (window.cloud && window.cloud.syncTipStateToCloud);
+            const syncFn = window.cloud && window.cloud.syncAppStateToCloud;
             if (typeof syncFn !== 'function') {
                 return { ok: false, reason: 'unavailable' };
             }
@@ -2016,7 +2021,21 @@
         }
 
         async function syncSavedTipState() {
-            return syncSavedAppState();
+            markTipStateModifiedLocally();
+            const syncFn = (window.cloud && window.cloud.syncTipStateToCloud)
+                || (window.cloud && window.cloud.syncAppStateToCloud);
+            if (typeof syncFn !== 'function') {
+                return { ok: false, reason: 'unavailable' };
+            }
+            if (tipStateCloudSyncPromise) return tipStateCloudSyncPromise;
+            tipStateCloudSyncPromise = syncFn(currentStoreId())
+                .catch(function (error) {
+                    return { ok: false, error: error };
+                })
+                .finally(function () {
+                    tipStateCloudSyncPromise = null;
+                });
+            return tipStateCloudSyncPromise;
         }
 
         function queueAppStateCloudSync() {
@@ -2026,6 +2045,15 @@
                 appStateCloudSyncTimer = null;
                 syncSavedAppState();
             }, 400);
+        }
+
+        function queueTipStateCloudSync() {
+            markTipStateModifiedLocally();
+            if (tipStateCloudSyncTimer) clearTimeout(tipStateCloudSyncTimer);
+            tipStateCloudSyncTimer = setTimeout(function () {
+                tipStateCloudSyncTimer = null;
+                syncSavedTipState();
+            }, 800);
         }
 
         function cloudSaveMessage(baseMessage, sync) {
@@ -10018,6 +10046,10 @@
             const hasWorkEntries = workEntries.some(entry => entry.workDate === date);
             if (hasWorkEntries) {
                 recalculateTipsForOverviewDate(date, tipData[date]);
+                if (dailyCalculations[date]) {
+                    dailyCalculations[date].timestamp = tipData[date].timestamp;
+                    localStorage.setItem('dailyCalculations', JSON.stringify(dailyCalculations));
+                }
             } else if (dailyCalculations[date]) {
                 delete dailyCalculations[date];
                 localStorage.setItem('dailyCalculations', JSON.stringify(dailyCalculations));
@@ -13183,6 +13215,7 @@
             });
             
             // Save the calculation (but don't display it - display only happens on confirm)
+            results.timestamp = new Date().toISOString();
             dailyCalculations[results.date] = results;
             localStorage.setItem('dailyCalculations', JSON.stringify(dailyCalculations));
             window.currentCalculation = results;
@@ -13592,6 +13625,7 @@
             }
             tipData[date].timestamp = new Date().toISOString();
             localStorage.setItem('tipData', JSON.stringify(tipData));
+            queueTipStateCloudSync();
         }
         
         (function setupTipDraftAutosave() {
