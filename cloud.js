@@ -468,7 +468,6 @@ function markLocalAppStateModified(storeId) {
   const now = new Date().toISOString();
   try {
     localStorage.setItem(localAppStateRevisionStorageKey(sid), now);
-    localStorage.setItem(localTipRevisionStorageKey(sid), now);
   } catch (e) {}
 }
 
@@ -477,31 +476,41 @@ function markLocalAppStateSynced(storeId, syncedAt) {
   const value = syncedAt || new Date().toISOString();
   try {
     localStorage.setItem(localAppStateRevisionStorageKey(sid), value);
-    localStorage.setItem(localTipRevisionStorageKey(sid), value);
   } catch (e) {}
 }
 
 function markLocalTipStateModified(storeId) {
-  markLocalAppStateModified(storeId);
+  const sid = String(storeId || getStoreId() || 'koeln').toLowerCase();
+  const now = new Date().toISOString();
+  try {
+    localStorage.setItem(localTipRevisionStorageKey(sid), now);
+  } catch (e) {}
 }
 
 function markLocalTipStateSynced(storeId, syncedAt) {
-  markLocalAppStateSynced(storeId, syncedAt);
+  const sid = String(storeId || getStoreId() || 'koeln').toLowerCase();
+  const value = syncedAt || new Date().toISOString();
+  try {
+    localStorage.setItem(localTipRevisionStorageKey(sid), value);
+  } catch (e) {}
 }
 
 function getLocalAppStateRevision(storeId) {
   const sid = String(storeId || getStoreId() || 'koeln').toLowerCase();
   try {
-    return localStorage.getItem(localAppStateRevisionStorageKey(sid))
-      || localStorage.getItem(localTipRevisionStorageKey(sid))
-      || '';
+    return localStorage.getItem(localAppStateRevisionStorageKey(sid)) || '';
   } catch (e) {
     return '';
   }
 }
 
 function getLocalTipStateRevision(storeId) {
-  return getLocalAppStateRevision(storeId);
+  const sid = String(storeId || getStoreId() || 'koeln').toLowerCase();
+  try {
+    return localStorage.getItem(localTipRevisionStorageKey(sid)) || '';
+  } catch (e) {
+    return '';
+  }
 }
 
 function getCloudStateTimestamp(cloudRow, cloudState) {
@@ -620,7 +629,11 @@ function applyStoreStateWithLocalMerge(storeId, cloudState, cloudRow) {
     return { keptLocalChanges: false, applied: false };
   }
   const sid = String(storeId || getStoreId() || 'koeln').toLowerCase();
-  const keepLocalChanges = isLocalAppStateNewerThanCloud(sid, cloudRow, cloudState);
+  let session = null;
+  try {
+    session = loadSession();
+  } catch (e) {}
+  const keepLocalSettings = isCloudAdmin(session) && isLocalAppStateNewerThanCloud(sid, cloudRow, cloudState);
   const localSnapshot = readLocalStorageKeys(sid);
   const mergedKeys = { ...cloudState.keys };
 
@@ -637,9 +650,8 @@ function applyStoreStateWithLocalMerge(storeId, cloudState, cloudRow) {
     }
   });
 
-  if (keepLocalChanges) {
-    autoSyncStorageKeys(sid).forEach(function (key) {
-      if (TIPS_SYNC_KEYS.indexOf(key) !== -1) return;
+  if (keepLocalSettings) {
+    SETTINGS_SYNC_KEYS.concat(STORE_SPECIFIC_SYNC_KEYS).forEach(function (key) {
       const storageKey = appStateStorageKey(sid, key);
       if (localSnapshot[storageKey] !== undefined) {
         mergedKeys[storageKey] = localSnapshot[storageKey];
@@ -653,10 +665,10 @@ function applyStoreStateWithLocalMerge(storeId, cloudState, cloudRow) {
     keys: mergedKeys,
     exportedAt: cloudState.exportedAt
   });
-  if (!keepLocalChanges) {
+  if (!keepLocalSettings) {
     markLocalAppStateSynced(sid, getCloudStateTimestamp(cloudRow, cloudState));
   }
-  return { keptLocalChanges: keepLocalChanges, applied: true };
+  return { keptLocalChanges: keepLocalSettings, applied: true };
 }
 
 function applyStoreStateWithLocalTipMerge(storeId, cloudState, cloudRow) {
@@ -687,6 +699,42 @@ async function upsertAppStateRow(storeId, state) {
   return true;
 }
 
+async function collectSettingsKeyPayload(storeId) {
+  const sid = String(storeId || getStoreId() || 'koeln').toLowerCase();
+  const localCollected = collectStoreState(sid);
+  const keys = {};
+  SETTINGS_SYNC_KEYS.concat(STORE_SPECIFIC_SYNC_KEYS).forEach(function (logical) {
+    const storageKey = appStateStorageKey(sid, logical);
+    if (localCollected.keys[storageKey] !== undefined) {
+      keys[logical] = localCollected.keys[storageKey];
+    }
+  });
+  return keys;
+}
+
+async function syncSettingsStateToCloud(storeId) {
+  const sid = String(storeId || getStoreId() || 'koeln').toLowerCase();
+  const session = await getSession();
+  if (!session) return { ok: false, reason: 'auth' };
+
+  const allowed = await getAllowedStoreIds();
+  if (allowed.length && !allowed.includes(sid)) return { ok: false, reason: 'access' };
+
+  const result = await restRequest(
+    'POST',
+    '/rest/v1/rpc/merge_store_settings_keys',
+    session.access_token,
+    {
+      p_store_id: sid,
+      p_keys: await collectSettingsKeyPayload(sid)
+    }
+  );
+
+  const exportedAt = result && result.exportedAt ? result.exportedAt : new Date().toISOString();
+  markLocalAppStateSynced(sid, exportedAt);
+  return { ok: true, exportedAt: exportedAt };
+}
+
 async function syncAppStateToCloud(storeId) {
   const sid = String(storeId || getStoreId() || 'koeln').toLowerCase();
   const session = await getSession();
@@ -694,6 +742,10 @@ async function syncAppStateToCloud(storeId) {
 
   const allowed = await getAllowedStoreIds();
   if (allowed.length && !allowed.includes(sid)) return { ok: false, reason: 'access' };
+
+  if (!isCloudAdmin(session)) {
+    return syncSettingsStateToCloud(sid);
+  }
 
   const rows = await restRequest(
     'GET',
