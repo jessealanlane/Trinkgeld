@@ -1480,7 +1480,7 @@
         </div>
     </div>
 
-    <script src="cloud.js?v=29"></script>
+    <script src="cloud.js?v=30"></script>
     <script>
         (function(){
             function getStoreFromURL(){
@@ -2136,14 +2136,14 @@
             try { spuelerProcedureSettings = readJson('spuelerProcedureSettings', spuelerProcedureSettings || []); } catch (e) {}
             try { baristaProcedureSettings = readJson('baristaProcedureSettings', baristaProcedureSettings || []); } catch (e) {}
             try { tipProcedurePeriods = readJson('tipProcedurePeriods', tipProcedurePeriods || []); } catch (e) {}
-            try { punctualityEnabled = localStorage.getItem('punctuality_enabled') === 'true'; } catch (e) {}
+            try { punctualityEnabled = readRaw('punctuality_enabled') === 'true'; } catch (e) {}
             try { punctualityPeriods = readJson('punctualityPeriods', punctualityPeriods || []); } catch (e) {}
             try {
-                const rawProc = localStorage.getItem('tipProcedureSettings');
+                const rawProc = readRaw('tipProcedureSettings');
                 if (rawProc) tipProcedureSettings = JSON.parse(rawProc);
             } catch (e) {}
             try {
-                const timeoutRaw = localStorage.getItem('koeln_personalTipsTimeout');
+                const timeoutRaw = readRaw('koeln_personalTipsTimeout');
                 if (timeoutRaw !== null && timeoutRaw !== undefined && timeoutRaw !== '') {
                     const parsedTimeout = parseInt(timeoutRaw, 10);
                     if (!Number.isNaN(parsedTimeout)) {
@@ -13688,7 +13688,16 @@
             if (allZero) {
                 if (typeof isTipsLockedForDate === 'function' && isTipsLockedForDate(date)) return;
                 delete tipData[date];
-                localStorage.setItem('tipData', JSON.stringify(tipData));
+                const emptyJson = JSON.stringify(tipData);
+                try { localStorage.setItem('tipData', emptyJson); } catch (e) {}
+                try {
+                    const sid = String(window.__store_id || currentStoreId() || 'koeln').toLowerCase();
+                    const storageKey = sid === 'koeln' ? 'tipData' : sid + '_tipData';
+                    if (window.cloud && typeof window.cloud.rawSet === 'function') {
+                        window.cloud.rawSet(storageKey, emptyJson);
+                    }
+                } catch (e) {}
+                queueTipStateCloudSync();
                 return;
             }
             tipData[date] = tipData[date] || {};
@@ -13709,7 +13718,17 @@
                 delete tipData[date].manualSpuelerTargets;
             }
             tipData[date].timestamp = new Date().toISOString();
-            localStorage.setItem('tipData', JSON.stringify(tipData));
+            const tipJson = JSON.stringify(tipData);
+            try {
+                localStorage.setItem('tipData', tipJson);
+            } catch (e) {}
+            try {
+                const sid = String(window.__store_id || currentStoreId() || 'koeln').toLowerCase();
+                const storageKey = sid === 'koeln' ? 'tipData' : sid + '_tipData';
+                if (window.cloud && typeof window.cloud.rawSet === 'function') {
+                    window.cloud.rawSet(storageKey, tipJson);
+                }
+            } catch (e) {}
             queueTipStateCloudSync();
         }
         

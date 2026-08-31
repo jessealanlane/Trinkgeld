@@ -61,7 +61,7 @@ function usesConstrainedWebKitStorage() {
 }
 
 function isLargeCafeKey(key) {
-  return /(^|_)(workEntries|dailyCalculations|tipData)$/.test(String(key || ''));
+  return /(^|_)(workEntries|dailyCalculations)$/.test(String(key || ''));
 }
 
 function isCafeStateKey(key) {
@@ -949,27 +949,46 @@ function applyStaffBundle(storeId, bundle) {
   if (!bundle || typeof bundle !== 'object') return false;
   const sid = String(storeId || getStoreId() || 'koeln').toLowerCase();
   let applied = false;
-  function put(logical, value) {
+  function putStorage(storageKey, value) {
     if (value === null || value === undefined) return;
+    if (isLargeCafeKey(storageKey)) return;
     const str = typeof value === 'string' ? value : valueToStorageString(value);
     if (str === null || str === '') return;
-    rawSet(appStateStorageKey(sid, logical), str);
+    rawSet(storageKey, str);
     applied = true;
   }
-  put('koeln_employees', bundle.employees);
-  put('koeln_lastWorkDate', bundle.lastWorkDate);
-  put('departments', bundle.departments);
-  put('koeln_personalTipsTimeout', bundle.timeout);
-  put('accessControlSettings', bundle.accessControl);
+  function putLogical(logical, value) {
+    putStorage(appStateStorageKey(sid, logical), value);
+  }
+  if (bundle.keys && typeof bundle.keys === 'object') {
+    Object.keys(bundle.keys).forEach(function (k) {
+      putStorage(k, bundle.keys[k]);
+    });
+  }
+  putLogical('koeln_employees', bundle.employees);
+  putLogical('koeln_lastWorkDate', bundle.lastWorkDate);
+  putLogical('departments', bundle.departments);
+  putLogical('koeln_personalTipsTimeout', bundle.timeout);
+  putLogical('accessControlSettings', bundle.accessControl);
   return applied;
 }
 
 async function fetchStoreStaffBundle(storeId, session) {
+  const sid = String(storeId || getStoreId() || 'koeln').toLowerCase();
+  try {
+    const small = await restRequest(
+      'POST',
+      '/rest/v1/rpc/get_store_small_state',
+      session.access_token,
+      { p_store_id: sid }
+    );
+    if (small && small.keys) return small;
+  } catch (e) {}
   return await restRequest(
     'POST',
     '/rest/v1/rpc/get_store_staff_bundle',
     session.access_token,
-    { p_store_id: String(storeId || getStoreId() || 'koeln').toLowerCase() }
+    { p_store_id: sid }
   );
 }
 
@@ -1272,6 +1291,7 @@ window.cloud = {
   fetchDeletedWorkEntryIds,
   changePassword,
   rawGet,
+  rawSet,
   STORE_LABELS,
   ALL_STORE_IDS
 };
