@@ -1480,7 +1480,7 @@
         </div>
     </div>
 
-    <script src="cloud.js?v=32"></script>
+    <script src="cloud.js?v=33"></script>
     <script>
         (function(){
             function getStoreFromURL(){
@@ -2201,13 +2201,64 @@
                 if (date && typeof refreshLiveShifts === 'function') {
                     refreshLiveShifts(date);
                 }
-                if (date && dailyCalculations[date] && typeof isTipsLockedForDate === 'function' && isTipsLockedForDate(date) && typeof displayCalculationResults === 'function') {
+                if (date && typeof showLockedCalculationForDate === 'function') {
+                    showLockedCalculationForDate(date);
+                } else if (date && dailyCalculations[date] && typeof isTipsLockedForDate === 'function' && isTipsLockedForDate(date) && typeof displayCalculationResults === 'function') {
                     displayCalculationResults(dailyCalculations[date]);
                     window.currentCalculation = dailyCalculations[date];
                 }
             } catch (e) {}
         };
         let dailyCalculations = JSON.parse(localStorage.getItem('dailyCalculations') || '{}');
+
+        function persistDailyCalculationsLocal() {
+            const json = JSON.stringify(dailyCalculations || {});
+            try { localStorage.setItem('dailyCalculations', json); } catch (e) {}
+            try {
+                const sid = String(window.__store_id || currentStoreId() || 'koeln').toLowerCase();
+                const key = sid === 'koeln' ? 'dailyCalculations' : sid + '_dailyCalculations';
+                if (window.cloud && typeof window.cloud.rawSet === 'function') {
+                    window.cloud.rawSet(key, json);
+                }
+            } catch (e) {}
+        }
+
+        async function loadCloudDayCalculation(date, force) {
+            if (!date) return false;
+            if (!force && dailyCalculations && dailyCalculations[date]) return true;
+            if (!window.cloud || typeof window.cloud.fetchDayCalculation !== 'function') return false;
+            try {
+                const result = await window.cloud.fetchDayCalculation(currentStoreId(), date);
+                const calc = result && result.calculation;
+                if (!calc || typeof calc !== 'object') return false;
+                dailyCalculations[date] = calc;
+                persistDailyCalculationsLocal();
+                try {
+                    if (window.cloud.applyDayCalculation) {
+                        window.cloud.applyDayCalculation(currentStoreId(), date, calc);
+                    }
+                } catch (e) {}
+                return true;
+            } catch (e) {
+                return false;
+            }
+        }
+
+        function showLockedCalculationForDate(date) {
+            if (!date || typeof displayCalculationResults !== 'function') return;
+            if (dailyCalculations[date] && typeof isTipsLockedForDate === 'function' && isTipsLockedForDate(date)) {
+                displayCalculationResults(dailyCalculations[date]);
+                window.currentCalculation = dailyCalculations[date];
+                return;
+            }
+            loadCloudDayCalculation(date).then(function (ok) {
+                if (ok && dailyCalculations[date] && typeof isTipsLockedForDate === 'function' && isTipsLockedForDate(date)) {
+                    displayCalculationResults(dailyCalculations[date]);
+                    window.currentCalculation = dailyCalculations[date];
+                }
+                if (typeof updateTipsLockUI === 'function') updateTipsLockUI();
+            });
+        }
         let tipData = JSON.parse(localStorage.getItem('tipData') || '{}');
         
         // Auto-update all old calculations on load (before tipProcedureSettings is initialized)
@@ -4846,8 +4897,13 @@
             // Check if there are work entries for this date
             const dayEntries = workEntries.filter(entry => entry.workDate === date);
             
-            if (dayEntries.length === 0) {
-                // Clear results if no entries
+            if (dayEntries.length === 0 && !(dailyCalculations[date] && isTipsLockedForDate(date))) {
+                if (typeof loadCloudDayCalculation === 'function') {
+                    loadCloudDayCalculation(date).then(function (ok) {
+                        if (ok) refreshCalculationTab();
+                    });
+                    return;
+                }
                 document.getElementById('calculationResults').innerHTML = '';
                 window.currentCalculation = null;
                 return;
@@ -14175,6 +14231,8 @@
             // Display calculation results if available for today
             if (dailyCalculations[today]) {
                 displayCalculationResults(dailyCalculations[today]);
+            } else if (typeof showLockedCalculationForDate === 'function') {
+                showLockedCalculationForDate(initialDate || today);
             }
             
             // Auto-update all old calculations on load (after all functions are defined)
@@ -14231,6 +14289,9 @@
                 } else {
                     document.getElementById('calculationResults').innerHTML = '';
                     window.currentCalculation = null;
+                    if (typeof showLockedCalculationForDate === 'function') {
+                        showLockedCalculationForDate(selectedDate);
+                    }
                 }
                 
                 checkAndApplyLockState(selectedDate);
@@ -14347,9 +14408,12 @@
                     window.currentCalculation = null;
                 }
             } else {
-                // No saved data - clear calculation results display
+                // No saved data - try cloud calculation for this date
                 document.getElementById('calculationResults').innerHTML = '';
                 window.currentCalculation = null;
+                if (typeof showLockedCalculationForDate === 'function') {
+                    showLockedCalculationForDate(selectedDate);
+                }
             }
             
             // Update lock UI

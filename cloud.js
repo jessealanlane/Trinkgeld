@@ -992,6 +992,30 @@ async function fetchStoreStaffBundle(storeId, session) {
   );
 }
 
+async function fetchDayCalculation(storeId, workDate) {
+  const session = await getSession();
+  if (!session) return { ok: false, reason: 'auth', calculation: null };
+  const sid = String(storeId || getStoreId() || 'koeln').toLowerCase();
+  const date = String(workDate || '').trim();
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(date)) return { ok: false, reason: 'date', calculation: null };
+  return await restRequest(
+    'POST',
+    '/rest/v1/rpc/get_store_day_calculation',
+    session.access_token,
+    { p_store_id: sid, p_work_date: date }
+  );
+}
+
+function applyDayCalculation(storeId, workDate, calculation) {
+  if (!workDate || !calculation || typeof calculation !== 'object') return false;
+  const sid = String(storeId || getStoreId() || 'koeln').toLowerCase();
+  const key = appStateStorageKey(sid, 'dailyCalculations');
+  const current = parseStoredJsonObject(rawGet(key));
+  current[String(workDate)] = calculation;
+  rawSet(key, JSON.stringify(current));
+  return true;
+}
+
 async function downloadStore(storeId) {
   const session = await getSession();
   if (!session) throw new Error('Nicht angemeldet.');
@@ -1293,6 +1317,8 @@ window.cloud = {
   seedWorkEntriesIfEmpty,
   pushMissingWorkEntries,
   fetchDeletedWorkEntryIds,
+  fetchDayCalculation,
+  applyDayCalculation,
   changePassword,
   rawGet,
   rawSet,
