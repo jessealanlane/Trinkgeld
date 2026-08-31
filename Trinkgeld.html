@@ -1480,7 +1480,7 @@
         </div>
     </div>
 
-    <script src="cloud.js?v=27"></script>
+    <script src="cloud.js?v=28"></script>
     <script>
         (function(){
             function getStoreFromURL(){
@@ -1850,7 +1850,9 @@
         }
 
         function persistWorkEntriesLocal() {
-            localStorage.setItem('workEntries', JSON.stringify(workEntries));
+            try {
+                localStorage.setItem('workEntries', JSON.stringify(workEntries));
+            } catch (e) {}
         }
 
         function setLiveShiftStatus(text) {
@@ -2075,54 +2077,80 @@
         }
 
         window.reloadTrinkgeldStoreState = function () {
-            tipData = JSON.parse(localStorage.getItem('tipData') || '{}');
-            dailyCalculations = JSON.parse(localStorage.getItem('dailyCalculations') || '{}');
-            tipPaymentPeriods = JSON.parse(localStorage.getItem('tipPaymentPeriods') || '[]');
-            kitchenProcedureSettings = JSON.parse(localStorage.getItem('kitchenProcedureSettings') || '[]');
-            spuelerProcedureSettings = JSON.parse(localStorage.getItem('spuelerProcedureSettings') || '[]');
-            baristaProcedureSettings = JSON.parse(localStorage.getItem('baristaProcedureSettings') || '[]');
-            tipProcedurePeriods = JSON.parse(localStorage.getItem('tipProcedurePeriods') || '[]');
-            departments = JSON.parse(localStorage.getItem('departments') || '[]');
-            EMPLOYEES = JSON.parse(localStorage.getItem('koeln_employees') || '{}');
-            punctualityEnabled = localStorage.getItem('punctuality_enabled') === 'true';
-            punctualityPeriods = JSON.parse(localStorage.getItem('punctualityPeriods') || '[]');
-            try {
-                workEntries = JSON.parse(localStorage.getItem('workEntries') || '[]');
-            } catch (e) {
-                workEntries = [];
+            function readJson(key, fallback) {
+                try {
+                    const raw = localStorage.getItem(key);
+                    if (raw === null || raw === undefined || raw === '') return fallback;
+                    return JSON.parse(raw);
+                } catch (e) {
+                    return fallback;
+                }
             }
+            try {
+                const loadedEmployees = readJson('koeln_employees', null);
+                if (loadedEmployees && typeof loadedEmployees === 'object') {
+                    EMPLOYEES = loadedEmployees;
+                }
+            } catch (e) {}
+            try {
+                const lastWork = localStorage.getItem('koeln_lastWorkDate');
+                if (lastWork && /^\d{4}-\d{2}-\d{2}$/.test(lastWork)) {
+                    const workDateEl = document.getElementById('workDate');
+                    const tipsDateEl = document.getElementById('tipsDate1');
+                    if (workDateEl) workDateEl.value = lastWork;
+                    if (tipsDateEl) tipsDateEl.value = lastWork;
+                    const monthSelect = document.getElementById('monthSelect');
+                    if (monthSelect) monthSelect.value = lastWork.substring(0, 7);
+                }
+            } catch (e) {}
+            try { if (typeof populateEmployeeDropdown === 'function') populateEmployeeDropdown(); } catch (e) {}
+            try { if (typeof populateEditEmployeeDropdown === 'function') populateEditEmployeeDropdown(); } catch (e) {}
+            try { if (typeof populateArchiveDropdown === 'function') populateArchiveDropdown(); } catch (e) {}
+            try { if (typeof populatePersonalEmployeeDropdown === 'function') populatePersonalEmployeeDropdown(); } catch (e) {}
+            try { if (typeof populateDepartmentDropdown === 'function') populateDepartmentDropdown('newEmployeeDept'); } catch (e) {}
+            try { if (typeof restoreAdminSessionForCurrentStore === 'function') restoreAdminSessionForCurrentStore(); } catch (e) {}
+            try { if (typeof restoreCloudEmployeeSession === 'function') restoreCloudEmployeeSession(); } catch (e) {}
+            try { departments = readJson('departments', departments || []); } catch (e) {}
+            try { tipPaymentPeriods = readJson('tipPaymentPeriods', tipPaymentPeriods || []); } catch (e) {}
+            try { kitchenProcedureSettings = readJson('kitchenProcedureSettings', kitchenProcedureSettings || []); } catch (e) {}
+            try { spuelerProcedureSettings = readJson('spuelerProcedureSettings', spuelerProcedureSettings || []); } catch (e) {}
+            try { baristaProcedureSettings = readJson('baristaProcedureSettings', baristaProcedureSettings || []); } catch (e) {}
+            try { tipProcedurePeriods = readJson('tipProcedurePeriods', tipProcedurePeriods || []); } catch (e) {}
+            try { punctualityEnabled = localStorage.getItem('punctuality_enabled') === 'true'; } catch (e) {}
+            try { punctualityPeriods = readJson('punctualityPeriods', punctualityPeriods || []); } catch (e) {}
             try {
                 const rawProc = localStorage.getItem('tipProcedureSettings');
                 if (rawProc) tipProcedureSettings = JSON.parse(rawProc);
             } catch (e) {}
-            const timeoutRaw = localStorage.getItem('koeln_personalTipsTimeout');
-            if (timeoutRaw !== null && timeoutRaw !== undefined && timeoutRaw !== '') {
-                const parsedTimeout = parseInt(timeoutRaw, 10);
-                if (!Number.isNaN(parsedTimeout)) {
-                    PERSONAL_TIPS_TIMEOUT = parsedTimeout * 1000;
+            try {
+                const timeoutRaw = localStorage.getItem('koeln_personalTipsTimeout');
+                if (timeoutRaw !== null && timeoutRaw !== undefined && timeoutRaw !== '') {
+                    const parsedTimeout = parseInt(timeoutRaw, 10);
+                    if (!Number.isNaN(parsedTimeout)) {
+                        PERSONAL_TIPS_TIMEOUT = parsedTimeout * 1000;
+                    }
                 }
-            }
-            if (typeof populateEmployeeDropdown === 'function') populateEmployeeDropdown();
-            if (typeof populateEditEmployeeDropdown === 'function') populateEditEmployeeDropdown();
-            if (typeof populateArchiveDropdown === 'function') populateArchiveDropdown();
-            if (typeof populatePersonalEmployeeDropdown === 'function') populatePersonalEmployeeDropdown();
-            if (typeof populateDepartmentDropdown === 'function') populateDepartmentDropdown('newEmployeeDept');
-            if (typeof displayTodayEntries === 'function') displayTodayEntries();
-            if (typeof updateUserDisplay === 'function') {
-                updateUserDisplay();
-            }
-            if (typeof updateTipsLockUI === 'function') {
-                updateTipsLockUI();
-            }
-            const workDateEl = document.getElementById('workDate');
-            const date = workDateEl && workDateEl.value;
-            if (date && typeof refreshLiveShifts === 'function') {
-                refreshLiveShifts(date);
-            }
-            if (date && dailyCalculations[date] && typeof isTipsLockedForDate === 'function' && isTipsLockedForDate(date) && typeof displayCalculationResults === 'function') {
-                displayCalculationResults(dailyCalculations[date]);
-                window.currentCalculation = dailyCalculations[date];
-            }
+            } catch (e) {}
+            try { tipData = readJson('tipData', tipData || {}); } catch (e) {}
+            try { dailyCalculations = readJson('dailyCalculations', dailyCalculations || {}); } catch (e) {}
+            try {
+                const loadedEntries = readJson('workEntries', null);
+                if (Array.isArray(loadedEntries)) workEntries = loadedEntries;
+            } catch (e) {}
+            try { if (typeof displayTodayEntries === 'function' && document.getElementById('workDate')) displayTodayEntries(); } catch (e) {}
+            try { if (typeof updateUserDisplay === 'function') updateUserDisplay(); } catch (e) {}
+            try { if (typeof updateTipsLockUI === 'function') updateTipsLockUI(); } catch (e) {}
+            try {
+                const workDateEl = document.getElementById('workDate');
+                const date = workDateEl && workDateEl.value;
+                if (date && typeof refreshLiveShifts === 'function') {
+                    refreshLiveShifts(date);
+                }
+                if (date && dailyCalculations[date] && typeof isTipsLockedForDate === 'function' && isTipsLockedForDate(date) && typeof displayCalculationResults === 'function') {
+                    displayCalculationResults(dailyCalculations[date]);
+                    window.currentCalculation = dailyCalculations[date];
+                }
+            } catch (e) {}
         };
         let dailyCalculations = JSON.parse(localStorage.getItem('dailyCalculations') || '{}');
         let tipData = JSON.parse(localStorage.getItem('tipData') || '{}');
@@ -3161,8 +3189,9 @@
                 let selectedUser = null;
                 
                 const uniqueAdmins = new Map();
-                Object.keys(EMPLOYEES).forEach(dept => {
-                    EMPLOYEES[dept].forEach(emp => {
+                Object.keys(EMPLOYEES || {}).forEach(dept => {
+                    const list = Array.isArray(EMPLOYEES[dept]) ? EMPLOYEES[dept] : [];
+                    list.forEach(emp => {
                         const isRole = emp.role === 'Leitung' || emp.role === 'Admin' || emp.role === 'manager' || emp.role === 'admin';
                         if (isRole && emp.active !== false) {
                             const key = `${emp.name}:${emp.employeeNumber}`;
@@ -3239,8 +3268,9 @@
                     }
 
                     let user = null;
-                    Object.keys(EMPLOYEES).forEach(dept => {
-                        const found = EMPLOYEES[dept].find(emp => emp.name === selectedUser.name && emp.employeeNumber === selectedUser.employeeNumber);
+                    Object.keys(EMPLOYEES || {}).forEach(dept => {
+                        const list = Array.isArray(EMPLOYEES[dept]) ? EMPLOYEES[dept] : [];
+                        const found = list.find(emp => emp.name === selectedUser.name && emp.employeeNumber === selectedUser.employeeNumber);
                         if (found && !user) {
                             user = found;
                         }
@@ -3855,9 +3885,10 @@
         
         async function migrateEmployeePinsToHash() {
             let changed = false;
-            for (const dept of Object.keys(EMPLOYEES)) {
-                for (let i = 0; i < EMPLOYEES[dept].length; i++) {
-                    const emp = EMPLOYEES[dept][i];
+            for (const dept of Object.keys(EMPLOYEES || {})) {
+                const list = Array.isArray(EMPLOYEES[dept]) ? EMPLOYEES[dept] : [];
+                for (let i = 0; i < list.length; i++) {
+                    const emp = list[i];
                     if (emp && emp.pin && !emp.pinHash) {
                         await setEmployeePin(emp, emp.pin);
                         changed = true;
@@ -13966,11 +13997,11 @@
             
             // Check if employees were loaded
             let totalEmployees = 0;
-            Object.keys(EMPLOYEES).forEach(dept => {
-                totalEmployees += EMPLOYEES[dept].length;
+            Object.keys(EMPLOYEES || {}).forEach(dept => {
+                totalEmployees += Array.isArray(EMPLOYEES[dept]) ? EMPLOYEES[dept].length : 0;
             });
             
-            if (totalEmployees === 0) {
+            if (totalEmployees === 0 && !(window.cloud && typeof window.cloud.getSession === 'function')) {
                 showMessage('⚠️ Keine Mitarbeiter gefunden! Bitte gehen Sie zum Tab "Einstellungen" und stellen Sie Ihr Backup wieder her oder fügen Sie Mitarbeiter manuell hinzu.', 'warning');
             }
             

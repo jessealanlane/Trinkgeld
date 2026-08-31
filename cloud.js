@@ -32,6 +32,20 @@ const SESSION_STORAGE_KEY = 'cloud_supabase_session_v1';
 const CLOUD_ADMIN_EMAIL = 'jessealanlane@gmail.com';
 const nativeLocalStorage = window.localStorage;
 
+function protoGet(key) {
+  return Storage.prototype.getItem.call(nativeLocalStorage, key);
+}
+function protoSet(key, value) {
+  return Storage.prototype.setItem.call(nativeLocalStorage, key, value);
+}
+function protoRem(key) {
+  return Storage.prototype.removeItem.call(nativeLocalStorage, key);
+}
+
+let rawGet = protoGet;
+let rawSet = protoSet;
+let rawRem = protoRem;
+
 function usesConstrainedWebKitStorage() {
   try {
     const ua = String(navigator.userAgent || '');
@@ -44,13 +58,24 @@ function usesConstrainedWebKitStorage() {
   }
 }
 
+function isLargeCafeKey(key) {
+  return /(^|_)(workEntries|dailyCalculations|tipData)$/.test(String(key || ''));
+}
+
+function isCafeStateKey(key) {
+  const k = String(key || '');
+  if (k === SESSION_STORAGE_KEY || k === 'current_store') return false;
+  if (SHARED_KEYS && SHARED_KEYS.indexOf(k) !== -1) return true;
+  return /^(koeln|bonn|apostelnstr|ehrenstr)_/.test(k);
+}
+
 function nowSeconds() {
   return Math.floor(Date.now() / 1000);
 }
 
 function loadSession() {
   try {
-    const raw = localStorage.getItem(SESSION_STORAGE_KEY);
+    const raw = protoGet(SESSION_STORAGE_KEY);
     if (!raw) return null;
     const s = JSON.parse(raw);
     if (!s || typeof s !== 'object') return null;
@@ -63,10 +88,10 @@ function loadSession() {
 function saveSession(session) {
   try {
     if (!session) {
-      localStorage.removeItem(SESSION_STORAGE_KEY);
+      protoRem(SESSION_STORAGE_KEY);
       return;
     }
-    localStorage.setItem(SESSION_STORAGE_KEY, JSON.stringify(session));
+    protoSet(SESSION_STORAGE_KEY, JSON.stringify(session));
   } catch (e) {}
 }
 
@@ -552,7 +577,7 @@ function readLocalStorageKeys(storeId) {
   const out = {};
   storeKeySetFor(storeId).forEach(function (k) {
     try {
-      const v = localStorage.getItem(k);
+      const v = rawGet(k);
       if (v !== null && v !== undefined) out[k] = v;
     } catch (e) {}
   });
@@ -592,74 +617,87 @@ function storeKeySetFor(storeId) {
 function installConstrainedStorageShim() {
   if (!usesConstrainedWebKitStorage()) return;
   const memory = {};
-  const origGet = nativeLocalStorage.getItem.bind(nativeLocalStorage);
-  const origSet = nativeLocalStorage.setItem.bind(nativeLocalStorage);
-  const origRem = nativeLocalStorage.removeItem.bind(nativeLocalStorage);
-  const storePrefix = /^(koeln|bonn|apostelnstr|ehrenstr)_/;
-
-  function useMemory(key) {
-    const k = String(key || '');
-    if (k === SESSION_STORAGE_KEY || k === 'current_store') return false;
-    if (SHARED_KEYS.indexOf(k) !== -1) return true;
-    if (storePrefix.test(k)) return true;
-    return false;
-  }
 
   ALL_STORE_IDS.forEach(function (id) {
     storeKeySetFor(id).forEach(function (k) {
+      if (!isLargeCafeKey(k)) return;
       try {
-        const v = origGet(k);
+        const v = protoGet(k);
         if (v !== null && v !== undefined) memory[k] = v;
-        origRem(k);
-      } catch (e) {}
-    });
-    [id + '_app_state_local_revision', id + '_app_state_local_tip_revision'].forEach(function (rk) {
-      try {
-        const v = origGet(rk);
-        if (v !== null && v !== undefined) memory[rk] = v;
-        origRem(rk);
+        protoRem(k);
       } catch (e) {}
     });
   });
 
-  localStorage.getItem = function (key) {
+  rawGet = function (key) {
     const k = String(key);
-    if (useMemory(k)) {
-      return Object.prototype.hasOwnProperty.call(memory, k) ? memory[k] : null;
+    if (isCafeStateKey(k)) {
+      if (Object.prototype.hasOwnProperty.call(memory, k)) return memory[k];
+      try {
+        return protoGet(k);
+      } catch (e) {
+        return null;
+      }
     }
-    return origGet(k);
+    return protoGet(k);
   };
-  localStorage.setItem = function (key, value) {
+  rawSet = function (key, value) {
     const k = String(key);
-    if (useMemory(k)) {
+    if (isCafeStateKey(k)) {
       if (value == null) {
         delete memory[k];
-      } else {
-        memory[k] = String(value);
+        try { protoRem(k); } catch (e) {}
+        return;
+      }
+      const str = String(value);
+      memory[k] = str;
+      if (!isLargeCafeKey(k)) {
+        try { protoSet(k, str); } catch (e) {}
       }
       return;
     }
-    return origSet(k, value);
+    return protoSet(k, value);
   };
-  localStorage.removeItem = function (key) {
+  rawRem = function (key) {
     const k = String(key);
-    if (useMemory(k)) {
+    if (isCafeStateKey(k)) {
       delete memory[k];
+      try { protoRem(k); } catch (e) {}
       return;
     }
-    return origRem(k);
+    return protoRem(k);
+  };
+
+  localStorage.getItem = function (key) {
+    return rawGet(key);
+  };
+  localStorage.setItem = function (key, value) {
+    return rawSet(key, value);
+  };
+  localStorage.removeItem = function (key) {
+    return rawRem(key);
   };
   window.__constrainedWebKitStorage = true;
 }
 
 installConstrainedStorageShim();
 
+function valueToStorageString(value) {
+  if (value === null || value === undefined) return null;
+  if (typeof value === 'string') return value;
+  try {
+    return JSON.stringify(value);
+  } catch (e) {
+    return String(value);
+  }
+}
+
 function collectStoreState(storeId) {
   const keys = storeKeySetFor(storeId);
   const values = {};
   keys.forEach(k => {
     try {
-      const v = localStorage.getItem(k);
+      const v = rawGet(k);
       if (v !== null && v !== undefined) values[k] = v;
     } catch (e) {}
   });
@@ -670,7 +708,7 @@ function hasLocalDataForStore(storeId) {
   const keys = storeKeySetFor(storeId);
   for (const k of keys) {
     try {
-      const v = localStorage.getItem(k);
+      const v = rawGet(k);
       if (v !== null && v !== undefined) return true;
     } catch (e) {}
   }
@@ -682,7 +720,7 @@ function evictOtherStoreData(keepStoreId) {
   ALL_STORE_IDS.forEach(storeId => {
     if (storeId === keep) return;
     storeKeySetFor(storeId).forEach(k => {
-      try { localStorage.removeItem(k); } catch (e) {}
+      try { rawRem(k); } catch (e) {}
     });
   });
 }
@@ -693,10 +731,11 @@ function applyStoreState(state) {
   evictOtherStoreData(storeId);
   Object.entries(state.keys).forEach(([k, v]) => {
     try {
-      if (v === null || v === undefined) {
-        localStorage.removeItem(k);
+      const str = valueToStorageString(v);
+      if (str === null) {
+        rawRem(k);
       } else {
-        localStorage.setItem(k, String(v));
+        rawSet(k, str);
       }
     } catch (e) {}
   });
@@ -907,7 +946,6 @@ async function uploadStore(storeId) {
 async function downloadStore(storeId) {
   const session = await getSession();
   if (!session) throw new Error('Nicht angemeldet.');
-  evictOtherStoreData(storeId);
   const sid = String(storeId || getStoreId() || 'koeln').toLowerCase();
   const rows = await restRequest(
     'GET',
@@ -1234,9 +1272,6 @@ document.addEventListener('DOMContentLoaded', async () => {
     const showStatus = hasCloudUI && isCloudAdmin(session);
     if (showStatus) setCloudOk('Lade Standort…');
     const current = await autoLoadCurrentStore();
-    if (onTrinkgeld && typeof window.reloadTrinkgeldStoreState === 'function') {
-      window.reloadTrinkgeldStoreState();
-    }
     if (showStatus) {
       setCloudOk(current.found
         ? `Geladen: ${STORE_LABELS[current.storeId] || current.storeId}.`
@@ -1245,6 +1280,10 @@ document.addEventListener('DOMContentLoaded', async () => {
   } catch (e) {
     if (hasCloudUI) {
       setCloudErr(e && e.message ? e.message : 'Automatisches Laden fehlgeschlagen.');
+    }
+  } finally {
+    if (onTrinkgeld && typeof window.reloadTrinkgeldStoreState === 'function') {
+      try { window.reloadTrinkgeldStoreState(); } catch (err) {}
     }
   }
 });
