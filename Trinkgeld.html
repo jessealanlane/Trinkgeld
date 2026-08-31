@@ -2093,6 +2093,15 @@
                     PERSONAL_TIPS_TIMEOUT = parsedTimeout * 1000;
                 }
             }
+            if (typeof updateUserDisplay === 'function') {
+                updateUserDisplay();
+            }
+            const workDateEl = document.getElementById('workDate');
+            const date = workDateEl && workDateEl.value;
+            if (date && dailyCalculations[date] && typeof isTipsLockedForDate === 'function' && isTipsLockedForDate(date) && typeof displayCalculationResults === 'function') {
+                displayCalculationResults(dailyCalculations[date]);
+                window.currentCalculation = dailyCalculations[date];
+            }
         };
         let dailyCalculations = JSON.parse(localStorage.getItem('dailyCalculations') || '{}');
         let tipData = JSON.parse(localStorage.getItem('tipData') || '{}');
@@ -3067,6 +3076,7 @@
             });
             saveAccessControlSettingsToStorage(settings);
             const sync = await syncSavedAppState();
+            updateUserDisplay();
             showMessage(
                 cloudSaveMessage('Zugriffssteuerung gespeichert.', sync),
                 sync && sync.ok ? 'success' : (sync && sync.reason === 'auth' ? 'success' : 'warning')
