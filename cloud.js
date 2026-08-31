@@ -30,6 +30,19 @@ function getStoreId() {
 
 const SESSION_STORAGE_KEY = 'cloud_supabase_session_v1';
 const CLOUD_ADMIN_EMAIL = 'jessealanlane@gmail.com';
+const nativeLocalStorage = window.localStorage;
+
+function usesConstrainedWebKitStorage() {
+  try {
+    const ua = String(navigator.userAgent || '');
+    const iOS = /iPhone|iPad|iPod/i.test(ua)
+      || (navigator.platform === 'MacIntel' && Number(navigator.maxTouchPoints || 0) > 1);
+    const desktopSafari = /Safari/i.test(ua) && !/Chrome|Chromium|CriOS|FxiOS|EdgiOS|OPR|Android/i.test(ua);
+    return iOS || desktopSafari;
+  } catch (e) {
+    return false;
+  }
+}
 
 function nowSeconds() {
   return Math.floor(Date.now() / 1000);
@@ -575,6 +588,71 @@ function storeKeySetFor(storeId) {
   }
   return keys;
 }
+
+function installConstrainedStorageShim() {
+  if (!usesConstrainedWebKitStorage()) return;
+  const memory = {};
+  const origGet = nativeLocalStorage.getItem.bind(nativeLocalStorage);
+  const origSet = nativeLocalStorage.setItem.bind(nativeLocalStorage);
+  const origRem = nativeLocalStorage.removeItem.bind(nativeLocalStorage);
+  const storePrefix = /^(koeln|bonn|apostelnstr|ehrenstr)_/;
+
+  function useMemory(key) {
+    const k = String(key || '');
+    if (k === SESSION_STORAGE_KEY || k === 'current_store') return false;
+    if (SHARED_KEYS.indexOf(k) !== -1) return true;
+    if (storePrefix.test(k)) return true;
+    return false;
+  }
+
+  ALL_STORE_IDS.forEach(function (id) {
+    storeKeySetFor(id).forEach(function (k) {
+      try {
+        const v = origGet(k);
+        if (v !== null && v !== undefined) memory[k] = v;
+        origRem(k);
+      } catch (e) {}
+    });
+    [id + '_app_state_local_revision', id + '_app_state_local_tip_revision'].forEach(function (rk) {
+      try {
+        const v = origGet(rk);
+        if (v !== null && v !== undefined) memory[rk] = v;
+        origRem(rk);
+      } catch (e) {}
+    });
+  });
+
+  localStorage.getItem = function (key) {
+    const k = String(key);
+    if (useMemory(k)) {
+      return Object.prototype.hasOwnProperty.call(memory, k) ? memory[k] : null;
+    }
+    return origGet(k);
+  };
+  localStorage.setItem = function (key, value) {
+    const k = String(key);
+    if (useMemory(k)) {
+      if (value == null) {
+        delete memory[k];
+      } else {
+        memory[k] = String(value);
+      }
+      return;
+    }
+    return origSet(k, value);
+  };
+  localStorage.removeItem = function (key) {
+    const k = String(key);
+    if (useMemory(k)) {
+      delete memory[k];
+      return;
+    }
+    return origRem(k);
+  };
+  window.__constrainedWebKitStorage = true;
+}
+
+installConstrainedStorageShim();
 
 function collectStoreState(storeId) {
   const keys = storeKeySetFor(storeId);

@@ -1480,7 +1480,7 @@
         </div>
     </div>
 
-    <script src="cloud.js?v=26"></script>
+    <script src="cloud.js?v=27"></script>
     <script>
         (function(){
             function getStoreFromURL(){
@@ -2086,6 +2086,15 @@
             EMPLOYEES = JSON.parse(localStorage.getItem('koeln_employees') || '{}');
             punctualityEnabled = localStorage.getItem('punctuality_enabled') === 'true';
             punctualityPeriods = JSON.parse(localStorage.getItem('punctualityPeriods') || '[]');
+            try {
+                workEntries = JSON.parse(localStorage.getItem('workEntries') || '[]');
+            } catch (e) {
+                workEntries = [];
+            }
+            try {
+                const rawProc = localStorage.getItem('tipProcedureSettings');
+                if (rawProc) tipProcedureSettings = JSON.parse(rawProc);
+            } catch (e) {}
             const timeoutRaw = localStorage.getItem('koeln_personalTipsTimeout');
             if (timeoutRaw !== null && timeoutRaw !== undefined && timeoutRaw !== '') {
                 const parsedTimeout = parseInt(timeoutRaw, 10);
@@ -2093,6 +2102,12 @@
                     PERSONAL_TIPS_TIMEOUT = parsedTimeout * 1000;
                 }
             }
+            if (typeof populateEmployeeDropdown === 'function') populateEmployeeDropdown();
+            if (typeof populateEditEmployeeDropdown === 'function') populateEditEmployeeDropdown();
+            if (typeof populateArchiveDropdown === 'function') populateArchiveDropdown();
+            if (typeof populatePersonalEmployeeDropdown === 'function') populatePersonalEmployeeDropdown();
+            if (typeof populateDepartmentDropdown === 'function') populateDepartmentDropdown('newEmployeeDept');
+            if (typeof displayTodayEntries === 'function') displayTodayEntries();
             if (typeof updateUserDisplay === 'function') {
                 updateUserDisplay();
             }
@@ -2101,6 +2116,9 @@
             }
             const workDateEl = document.getElementById('workDate');
             const date = workDateEl && workDateEl.value;
+            if (date && typeof refreshLiveShifts === 'function') {
+                refreshLiveShifts(date);
+            }
             if (date && dailyCalculations[date] && typeof isTipsLockedForDate === 'function' && isTipsLockedForDate(date) && typeof displayCalculationResults === 'function') {
                 displayCalculationResults(dailyCalculations[date]);
                 window.currentCalculation = dailyCalculations[date];
