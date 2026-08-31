@@ -1025,6 +1025,10 @@ async function downloadStore(storeId) {
   } catch (e) {
     if (!found) throw e;
   }
+  try {
+    const bundle = await fetchStoreStaffBundle(sid, session);
+    if (applyStaffBundle(sid, bundle)) found = true;
+  } catch (e) {}
   return found;
 }
 

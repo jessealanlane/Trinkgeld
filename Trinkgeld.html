@@ -1480,7 +1480,7 @@
         </div>
     </div>
 
-    <script src="cloud.js?v=30"></script>
+    <script src="cloud.js?v=31"></script>
     <script>
         (function(){
             function getStoreFromURL(){
@@ -1750,7 +1750,7 @@
                         }
                     }
                     
-                    if (modified) {
+                    if (modified && !window.__constrainedWebKitStorage) {
                         console.log('🔁 Updated departments configuration to include Barista pooled with Service.');
                         localStorage.setItem('departments', JSON.stringify(depts));
                     }
@@ -1812,7 +1812,9 @@
                     active: true
                 }
             ];
-            localStorage.setItem('departments', JSON.stringify(defaults));
+            if (!window.__constrainedWebKitStorage) {
+                localStorage.setItem('departments', JSON.stringify(defaults));
+            }
             return defaults;
         })();
         
@@ -2160,6 +2162,12 @@
             try { if (typeof displayTodayEntries === 'function' && document.getElementById('workDate')) displayTodayEntries(); } catch (e) {}
             try { if (typeof updateUserDisplay === 'function') updateUserDisplay(); } catch (e) {}
             try { if (typeof updateTipsLockUI === 'function') updateTipsLockUI(); } catch (e) {}
+            try { if (typeof displayPeriodsTable === 'function') displayPeriodsTable(); } catch (e) {}
+            try { if (typeof displayProcedureSettingsTable === 'function') displayProcedureSettingsTable(); } catch (e) {}
+            try { if (typeof displayDepartmentsTable === 'function') displayDepartmentsTable(); } catch (e) {}
+            try { if (typeof loadPunctualitySettingsUI === 'function') loadPunctualitySettingsUI(); } catch (e) {}
+            try { if (typeof loadPersonalTipsTimeoutSetting === 'function') loadPersonalTipsTimeoutSetting(); } catch (e) {}
+            try { if (typeof renderAccessControlUI === 'function') renderAccessControlUI(); } catch (e) {}
             try {
                 const workDateEl = document.getElementById('workDate');
                 const date = workDateEl && workDateEl.value;
