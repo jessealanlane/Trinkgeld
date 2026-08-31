@@ -2096,6 +2096,9 @@
             if (typeof updateUserDisplay === 'function') {
                 updateUserDisplay();
             }
+            if (typeof updateTipsLockUI === 'function') {
+                updateTipsLockUI();
+            }
             const workDateEl = document.getElementById('workDate');
             const date = workDateEl && workDateEl.value;
             if (date && dailyCalculations[date] && typeof isTipsLockedForDate === 'function' && isTipsLockedForDate(date) && typeof displayCalculationResults === 'function') {
@@ -13394,6 +13397,28 @@
             }
         }
         
+        function fillTipAmountFields(date) {
+            const cardTipsEl = document.getElementById('cardTips');
+            const cashTipsEl = document.getElementById('cashTips');
+            const totalEl = document.getElementById('totalTips');
+            if (!date || !cardTipsEl || !cashTipsEl) return;
+            const savedTips = tipData[date];
+            const savedCalc = dailyCalculations[date];
+            if (savedTips) {
+                cardTipsEl.value = (savedTips.cardTips || 0).toFixed(2);
+                cashTipsEl.value = (savedTips.cashTips || 0).toFixed(2);
+                if (totalEl) {
+                    totalEl.value = (savedTips.totalTips || ((savedTips.cardTips || 0) + (savedTips.cashTips || 0))).toFixed(2);
+                }
+            } else if (savedCalc) {
+                if (savedCalc.cardTips !== undefined) cardTipsEl.value = (savedCalc.cardTips || 0).toFixed(2);
+                if (savedCalc.cashTips !== undefined) cashTipsEl.value = (savedCalc.cashTips || 0).toFixed(2);
+                if (totalEl) {
+                    totalEl.value = (savedCalc.totalTips || ((savedCalc.cardTips || 0) + (savedCalc.cashTips || 0))).toFixed(2);
+                }
+            }
+        }
+
         function updateTipsLockUI() {
             const date = document.getElementById('workDate').value;
             const isLocked = isTipsLockedForDate(date);
@@ -13460,6 +13485,7 @@
                 // Hide both buttons - period lock cannot be unlocked
                 confirmBtn.style.display = 'none';
                 unlockBtn.style.display = 'none';
+                fillTipAmountFields(date);
             } else if (isLocked) {
                 // DAY IS LOCKED (but period is not) - admin can unlock
                 periodLockBanner.style.display = 'none';
@@ -13485,18 +13511,7 @@
                     cashTipsEl.onclick = null;
                     spuelerEl.onclick = null;
                     
-                    // Ensure locked date displays saved values
-                    const savedTips = tipData[date];
-                    const savedCalc = dailyCalculations[date];
-                    if (savedTips) {
-                        cardTipsEl.value = (savedTips.cardTips || 0).toFixed(2);
-                        cashTipsEl.value = (savedTips.cashTips || 0).toFixed(2);
-                        document.getElementById('totalTips').value = (savedTips.totalTips || ((savedTips.cardTips || 0) + (savedTips.cashTips || 0))).toFixed(2);
-                    } else if (savedCalc) {
-                        if (savedCalc.cardTips !== undefined) cardTipsEl.value = (savedCalc.cardTips || 0).toFixed(2);
-                        if (savedCalc.cashTips !== undefined) cashTipsEl.value = (savedCalc.cashTips || 0).toFixed(2);
-                        document.getElementById('totalTips').value = (savedCalc.totalTips || (((savedCalc.cardTips || 0) + (savedCalc.cashTips || 0)))).toFixed(2);
-                    }
+                    fillTipAmountFields(date);
                     
                     confirmBtn.style.display = 'none';
                     unlockBtn.style.display = 'inline-block';
@@ -13525,18 +13540,7 @@
                     cashTipsEl.onclick = showLockedMessage;
                     spuelerEl.onclick = showLockedMessage;
                     
-                    // Ensure locked date displays saved values
-                    const savedTips = tipData[date];
-                    const savedCalc = dailyCalculations[date];
-                    if (savedTips) {
-                        cardTipsEl.value = (savedTips.cardTips || 0).toFixed(2);
-                        cashTipsEl.value = (savedTips.cashTips || 0).toFixed(2);
-                        document.getElementById('totalTips').value = (savedTips.totalTips || ((savedTips.cardTips || 0) + (savedTips.cashTips || 0))).toFixed(2);
-                    } else if (savedCalc) {
-                        if (savedCalc.cardTips !== undefined) cardTipsEl.value = (savedCalc.cardTips || 0).toFixed(2);
-                        if (savedCalc.cashTips !== undefined) cashTipsEl.value = (savedCalc.cashTips || 0).toFixed(2);
-                        document.getElementById('totalTips').value = (savedCalc.totalTips || (((savedCalc.cardTips || 0) + (savedCalc.cashTips || 0)))).toFixed(2);
-                    }
+                    fillTipAmountFields(date);
                     
                     confirmBtn.style.display = 'none';
                     unlockBtn.style.display = 'none';
@@ -13593,6 +13597,7 @@
                     cardTipsEl.onclick = showNoAccessMsg;
                     cashTipsEl.onclick = showNoAccessMsg;
                     spuelerEl.onclick = showNoAccessMsg;
+                    fillTipAmountFields(date);
                     
                     confirmBtn.style.display = 'none';
                     unlockBtn.style.display = 'none';
@@ -13612,6 +13617,7 @@
             const allZero = card === 0 && cash === 0 && total === 0;
             if (allZero && !tipData[date]) return;
             if (allZero) {
+                if (typeof isTipsLockedForDate === 'function' && isTipsLockedForDate(date)) return;
                 delete tipData[date];
                 localStorage.setItem('tipData', JSON.stringify(tipData));
                 return;
