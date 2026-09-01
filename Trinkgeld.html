@@ -2190,6 +2190,8 @@
             try { if (typeof updateUserDisplay === 'function') updateUserDisplay(); } catch (e) {}
             try { if (typeof updateTipsLockUI === 'function') updateTipsLockUI(); } catch (e) {}
             try { if (typeof displayPeriodsTable === 'function') displayPeriodsTable(); } catch (e) {}
+            try { if (typeof populatePersonalPeriodDropdown === 'function') populatePersonalPeriodDropdown(); } catch (e) {}
+            try { if (typeof populateWeeklyPeriodDropdown === 'function') populateWeeklyPeriodDropdown(); } catch (e) {}
             try { if (typeof displayProcedureSettingsTable === 'function') displayProcedureSettingsTable(); } catch (e) {}
             try { if (typeof displayDepartmentsTable === 'function') displayDepartmentsTable(); } catch (e) {}
             try { if (typeof loadPunctualitySettingsUI === 'function') loadPunctualitySettingsUI(); } catch (e) {}
@@ -4834,6 +4836,12 @@
             if (tabName === 'entry') {
                 const dateEl = document.getElementById('workDate');
                 if (dateEl && dateEl.value) refreshLiveShifts(dateEl.value);
+            }
+            if (tabName === 'personal' && typeof populatePersonalPeriodDropdown === 'function') {
+                populatePersonalPeriodDropdown();
+            }
+            if (tabName === 'weekly' && typeof populateWeeklyPeriodDropdown === 'function') {
+                populateWeeklyPeriodDropdown();
             }
         }
         
