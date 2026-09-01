@@ -1480,7 +1480,7 @@
         </div>
     </div>
 
-    <script src="cloud.js?v=33"></script>
+    <script src="cloud.js?v=34"></script>
     <script>
         (function(){
             function getStoreFromURL(){
@@ -2230,8 +2230,9 @@
             try {
                 const result = await window.cloud.fetchDayCalculation(currentStoreId(), date);
                 const calc = result && result.calculation;
-                if (!calc || typeof calc !== 'object') return false;
-                dailyCalculations[date] = calc;
+                const parsed = typeof calc === 'string' ? JSON.parse(calc) : calc;
+                if (!parsed || typeof parsed !== 'object') return false;
+                dailyCalculations[date] = parsed;
                 persistDailyCalculationsLocal();
                 try {
                     if (window.cloud.applyDayCalculation) {
@@ -2246,16 +2247,24 @@
 
         function showLockedCalculationForDate(date) {
             if (!date || typeof displayCalculationResults !== 'function') return;
-            if (dailyCalculations[date] && typeof isTipsLockedForDate === 'function' && isTipsLockedForDate(date)) {
-                displayCalculationResults(dailyCalculations[date]);
-                window.currentCalculation = dailyCalculations[date];
-                return;
+            function canShow() {
+                const locked = typeof isTipsLockedForDate === 'function' && isTipsLockedForDate(date);
+                const periodLocked = typeof getLockedPeriodForDate === 'function' && getLockedPeriodForDate(date);
+                return !!(locked || periodLocked);
             }
-            loadCloudDayCalculation(date).then(function (ok) {
-                if (ok && dailyCalculations[date] && typeof isTipsLockedForDate === 'function' && isTipsLockedForDate(date)) {
+            function paint() {
+                if (!canShow() || !dailyCalculations[date]) return false;
+                try {
                     displayCalculationResults(dailyCalculations[date]);
                     window.currentCalculation = dailyCalculations[date];
-                }
+                } catch (e) {}
+                if (typeof updateUserDisplay === 'function') updateUserDisplay();
+                if (typeof updateTipsLockUI === 'function') updateTipsLockUI();
+                return true;
+            }
+            if (paint()) return;
+            loadCloudDayCalculation(date).then(function () {
+                paint();
                 if (typeof updateTipsLockUI === 'function') updateTipsLockUI();
             });
         }
@@ -9342,11 +9351,11 @@
             }
             
             // Move lock status from source to target
-            let lockedTips = JSON.parse(localStorage.getItem('lockedTips') || '{}');
+            let lockedTips = readLockedTipsMap();
             if (lockedTips[sourceDate]) {
                 lockedTips[targetDate] = lockedTips[sourceDate];
                 delete lockedTips[sourceDate];
-                localStorage.setItem('lockedTips', JSON.stringify(lockedTips));
+                writeLockedTipsMap(lockedTips);
             }
             
             // Save all updated data
@@ -9430,10 +9439,10 @@
             }
             
             // Remove lock for this date
-            let lockedTips = JSON.parse(localStorage.getItem('lockedTips') || '{}');
+            let lockedTips = readLockedTipsMap();
             if (lockedTips[currentDate]) {
                 delete lockedTips[currentDate];
-                localStorage.setItem('lockedTips', JSON.stringify(lockedTips));
+                writeLockedTipsMap(lockedTips);
             }
             
             // Save updated data
@@ -9703,6 +9712,14 @@
         
         function displayCalculationResults(results) {
             const container = document.getElementById('calculationResults');
+            if (!results || !container) return;
+            if (!Array.isArray(results.spueler)) results.spueler = [];
+            if (!Array.isArray(results.service)) results.service = [];
+            if (!Array.isArray(results.kitchen)) results.kitchen = [];
+            if (!Array.isArray(results.barista)) results.barista = [];
+            results.totalTips = Number(results.totalTips) || 0;
+            results.cardTips = Number(results.cardTips) || 0;
+            results.cashTips = Number(results.cashTips) || 0;
             
             // Show punctuality column only if a period covers the results date
             const showPunctuality = hasPunctualityPeriodForDate(results.date);
@@ -10241,9 +10258,9 @@
             markTipStateModifiedLocally();
 
             if (lockAfterSave) {
-                const lockedTips = JSON.parse(localStorage.getItem('lockedTips') || '{}');
+                const lockedTips = readLockedTipsMap();
                 lockedTips[date] = true;
-                localStorage.setItem('lockedTips', JSON.stringify(lockedTips));
+                writeLockedTipsMap(lockedTips);
             }
 
             syncOverviewEditToMainForm(date, tipData[date]);
@@ -11892,7 +11909,7 @@
                 ehrenstr: 'CROP - Ehren'
             };
             const storeLabel = storeLabelMap[storeId] || storeId;
-            const lockedTips = JSON.parse(localStorage.getItem('lockedTips') || '{}');
+            const lockedTips = readLockedTipsMap();
             const today = new Date();
             const backupDate = `${String(today.getDate()).padStart(2, '0')}-${String(today.getMonth() + 1).padStart(2, '0')}-${today.getFullYear()}`;
             
@@ -12180,7 +12197,7 @@
                                 if (data.lockedTips) {
                                     const lockedDatesCount = Object.keys(data.lockedTips).length;
                                     console.log(`🔒 Restoring lock status for ${lockedDatesCount} date(s) from backup`);
-                                    localStorage.setItem('lockedTips', JSON.stringify(data.lockedTips));
+                                    writeLockedTipsMap(data.lockedTips);
                                     updateTipsLockUI(); // Update UI to reflect lock status
                                 }
                                 
@@ -12420,9 +12437,9 @@
                             localStorage.setItem('tipData', JSON.stringify(tipData));
                         }
                         if (data.lockedTips && typeof data.lockedTips === 'object') {
-                            const current = JSON.parse(localStorage.getItem('lockedTips') || '{}');
+                            const current = readLockedTipsMap();
                             const merged = { ...current, ...data.lockedTips };
-                            localStorage.setItem('lockedTips', JSON.stringify(merged));
+                            writeLockedTipsMap(merged);
                             updateTipsLockUI();
                         }
                         if (data.personalTipsTimeout !== undefined && !localStorage.getItem('koeln_personalTipsTimeout')) {
@@ -13504,9 +13521,9 @@
             }
             
             // Lock the tips
-            let lockedTips = JSON.parse(localStorage.getItem('lockedTips') || '{}');
+            let lockedTips = readLockedTipsMap();
             lockedTips[date] = true;
-            localStorage.setItem('lockedTips', JSON.stringify(lockedTips));
+            writeLockedTipsMap(lockedTips);
             
             // Update UI
             updateTipsLockUI();
@@ -13536,9 +13553,9 @@
             }
             
             // Remove lock for this date
-            let lockedTips = JSON.parse(localStorage.getItem('lockedTips') || '{}');
+            let lockedTips = readLockedTipsMap();
             delete lockedTips[date];
-            localStorage.setItem('lockedTips', JSON.stringify(lockedTips));
+            writeLockedTipsMap(lockedTips);
             
             // Hide calculation results when unlocking (prevents screenshots before re-confirmation)
             document.getElementById('calculationResults').innerHTML = '';
@@ -13549,21 +13566,48 @@
             showMessage('🔓 Trinkgelder wurden entsperrt und können jetzt bearbeitet werden. Klicken Sie auf "Bestätigen und Sperren" nach der Bearbeitung, um die neuen Ergebnisse anzuzeigen.', 'success');
         }
         
+        function readLockedTipsMap() {
+            try {
+                const raw = (typeof window.__readCafeItem === 'function')
+                    ? window.__readCafeItem('lockedTips')
+                    : localStorage.getItem('lockedTips');
+                const parsed = raw ? JSON.parse(raw) : {};
+                return parsed && typeof parsed === 'object' && !Array.isArray(parsed) ? parsed : {};
+            } catch (e) {
+                return {};
+            }
+        }
+
+        function writeLockedTipsMap(map) {
+            const raw = JSON.stringify(map && typeof map === 'object' ? map : {});
+            if (typeof window.__writeCafeItem === 'function') {
+                window.__writeCafeItem('lockedTips', raw);
+            } else {
+                localStorage.setItem('lockedTips', raw);
+            }
+        }
+
+        function isLockFlag(value) {
+            return value === true || value === 1 || value === 'true' || value === '1';
+        }
+
         function isTipsLockedForDate(date) {
-            const lockedTips = JSON.parse(localStorage.getItem('lockedTips') || '{}');
-            return lockedTips[date] === true;
+            if (!date) return false;
+            return isLockFlag(readLockedTipsMap()[date]);
         }
         
         function reconcileEmptyLock(date) {
             if (!date) return;
+            if (window.__constrainedWebKitStorage) return;
             const locked = isTipsLockedForDate(date);
             const period = getLockedPeriodForDate(date);
             const hasTip = !!(tipData && tipData[date]);
             const hasCalc = !!(dailyCalculations && dailyCalculations[date]);
+            if (locked && !hasCalc && window.cloud && typeof window.cloud.fetchDayCalculation === 'function') return;
             if (locked && !period && !hasTip && !hasCalc) {
-                const lockedTips = JSON.parse(localStorage.getItem('lockedTips') || '{}');
+                const lockedTips = readLockedTipsMap();
                 delete lockedTips[date];
-                localStorage.setItem('lockedTips', JSON.stringify(lockedTips));
+                writeLockedTipsMap(lockedTips);
             }
         }
         

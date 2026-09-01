@@ -763,7 +763,9 @@ function applyStoreStateWithLocalMerge(storeId, cloudState, cloudRow) {
     if (key === 'lockedTips') {
       const cloudLocks = parseStoredJsonObject(cloudState.keys[storageKey]);
       const localLocks = parseStoredJsonObject(localRaw);
-      mergedKeys[storageKey] = JSON.stringify(Object.assign({}, cloudLocks, localLocks));
+      mergedKeys[storageKey] = JSON.stringify(usesConstrainedWebKitStorage()
+        ? Object.assign({}, localLocks, cloudLocks)
+        : Object.assign({}, cloudLocks, localLocks));
     } else {
       mergedKeys[storageKey] = mergeStoredJsonObjects(cloudState.keys[storageKey], localRaw);
     }
@@ -963,6 +965,12 @@ function applyStaffBundle(storeId, bundle) {
   if (bundle.keys && typeof bundle.keys === 'object') {
     Object.keys(bundle.keys).forEach(function (k) {
       putStorage(k, bundle.keys[k]);
+      const logical = String(k || '').replace(/^(koeln|bonn|apostelnstr|ehrenstr)_/, '');
+      if (logical && logical !== k) {
+        putStorage(appStateStorageKey(sid, logical), bundle.keys[k]);
+      } else if (SHARED_KEYS.indexOf(k) !== -1) {
+        putStorage(appStateStorageKey(sid, k), bundle.keys[k]);
+      }
     });
   }
   putLogical('koeln_employees', bundle.employees);
@@ -1007,11 +1015,16 @@ async function fetchDayCalculation(storeId, workDate) {
 }
 
 function applyDayCalculation(storeId, workDate, calculation) {
-  if (!workDate || !calculation || typeof calculation !== 'object') return false;
+  if (!workDate || calculation == null) return false;
+  let parsed = calculation;
+  if (typeof parsed === 'string') {
+    try { parsed = JSON.parse(parsed); } catch (e) { return false; }
+  }
+  if (!parsed || typeof parsed !== 'object') return false;
   const sid = String(storeId || getStoreId() || 'koeln').toLowerCase();
   const key = appStateStorageKey(sid, 'dailyCalculations');
   const current = parseStoredJsonObject(rawGet(key));
-  current[String(workDate)] = calculation;
+  current[String(workDate)] = parsed;
   rawSet(key, JSON.stringify(current));
   return true;
 }
