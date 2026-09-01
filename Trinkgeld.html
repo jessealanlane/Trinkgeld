@@ -1939,6 +1939,11 @@
                 if (typeof displayTodayEntries === 'function' && document.getElementById('workDate')) {
                     displayTodayEntries();
                 }
+                if (workDate && typeof recalculateSavedTipsForDate === 'function' && calculationMissingShiftsForDate(workDate)) {
+                    try {
+                        await recalculateSavedTipsForDate(workDate, { silent: true });
+                    } catch (e) {}
+                }
                 return true;
             } catch (e) {
                 return false;
@@ -2285,6 +2290,82 @@
                     window.cloud.rawSet(key, json);
                 }
             } catch (e) {}
+        }
+
+        function savedTipsSourceForDate(date) {
+            if (!date) return null;
+            const tip = tipData && tipData[date];
+            if (tip && Number(tip.totalTips) > 0) return tip;
+            const calc = dailyCalculations && dailyCalculations[date];
+            if (calc && Number(calc.totalTips) > 0) return calc;
+            return null;
+        }
+
+        function calculationMissingShiftsForDate(date) {
+            if (!date) return false;
+            const entries = (workEntries || []).filter(function (entry) { return entry && entry.workDate === date; });
+            if (!entries.length) return false;
+            const calc = dailyCalculations && dailyCalculations[date];
+            if (!calc) return true;
+            const included = {};
+            Object.keys(calc).forEach(function (dept) {
+                if (!Array.isArray(calc[dept])) return;
+                calc[dept].forEach(function (emp) {
+                    if (emp && emp.name) included[String(dept) + '|' + String(emp.name)] = true;
+                });
+            });
+            return entries.some(function (entry) {
+                return !included[String(entry.department) + '|' + String(entry.name || '')];
+            });
+        }
+
+        async function recalculateSavedTipsForDate(date, options) {
+            options = options || {};
+            if (!date) return null;
+            if (typeof getLockedPeriodForDate === 'function' && getLockedPeriodForDate(date)) return null;
+            const source = savedTipsSourceForDate(date);
+            if (!source) return null;
+            const dayEntries = (workEntries || []).filter(function (entry) { return entry && entry.workDate === date; });
+            if (!dayEntries.length) return null;
+            if (typeof calculateAndSaveTips !== 'function') return null;
+
+            const viewingDate = document.getElementById('workDate')?.value === date;
+            const formState = (!viewingDate && typeof captureTipFormState === 'function') ? captureTipFormState() : null;
+            try {
+                const workDateEl = document.getElementById('workDate');
+                const tipsDateEl = document.getElementById('tipsDate1');
+                if (workDateEl) workDateEl.value = date;
+                if (tipsDateEl) tipsDateEl.value = date;
+                const totalEl = document.getElementById('totalTips');
+                const cardEl = document.getElementById('cardTips');
+                const cashEl = document.getElementById('cashTips');
+                if (totalEl) totalEl.value = Number(source.totalTips || 0).toFixed(2);
+                if (cardEl) cardEl.value = Number(source.cardTips || 0).toFixed(2);
+                if (cashEl) cashEl.value = Number(source.cashTips || 0).toFixed(2);
+                if (typeof applySpuelerInputsFromSource === 'function') {
+                    applySpuelerInputsFromSource(source, date, source.spuelerAdjustment || source.spuelerRate || '');
+                }
+                const results = calculateAndSaveTips();
+                if (!results) return null;
+                persistDailyCalculationsLocal();
+                if (viewingDate && typeof displayCalculationResults === 'function') {
+                    displayCalculationResults(results);
+                    window.currentCalculation = results;
+                }
+                if (viewingDate && typeof updateTipsLockUI === 'function') updateTipsLockUI();
+                if (!options.skipSync) {
+                    if (options.awaitSync && typeof syncSavedTipState === 'function') {
+                        await syncSavedTipState();
+                    } else if (typeof queueTipStateCloudSync === 'function') {
+                        queueTipStateCloudSync();
+                    }
+                }
+                return results;
+            } finally {
+                if (formState && typeof restoreTipFormState === 'function') {
+                    restoreTipFormState(formState);
+                }
+            }
         }
 
         async function loadCloudDayCalculation(date, force) {
@@ -9063,68 +9144,21 @@
             localStorage.setItem('workEntries', JSON.stringify(workEntries));
             displayTodayEntries();
             const liveSync = await syncSavedWorkEntry(entry);
-            
-            // If tips are locked for this date, auto-recalculate (whether new entry or update)
-            if (isTipsLockedForDate(workDate)) {
-                // Check if we have saved tip data for this date
-                const savedTip = tipData[workDate];
-                const savedCalc = dailyCalculations[workDate];
-                
-                if (savedTip && savedTip.totalTips > 0) {
-                    // Set the tip values temporarily to allow recalculation
-                    const originalTotalTips = document.getElementById('totalTips').value;
-                    const originalCardTips = document.getElementById('cardTips').value;
-                    const originalCashTips = document.getElementById('cashTips').value;
-                    const originalSpueler = document.getElementById('spuelerAdjustment').value;
-                    const originalWeekend = document.getElementById('isWeekend').value;
-                    
-                    // Set saved values from tipData
-                    document.getElementById('totalTips').value = savedTip.totalTips.toFixed(2);
-                    document.getElementById('cardTips').value = (savedTip.cardTips || 0).toFixed(2);
-                    document.getElementById('cashTips').value = (savedTip.cashTips || 0).toFixed(2);
-                    // Use spuelerRate from tipData (manual entry takes priority), or get from settings, or use defaults
-                    let spuelerRate = savedTip.spuelerRate;
-                    if (!spuelerRate) {
-                        // Try to get from settings for this date
-                        const isWeekendBool = savedTip.isWeekend === 'weekend' || savedTip.isWeekend === true;
-                        const settingsRate = getSpuelerRateForDate(workDate, isWeekendBool);
-                        if (settingsRate !== null && settingsRate !== undefined) {
-                            spuelerRate = settingsRate;
-                        } else {
-                            // Final fallback to hardcoded defaults
-                            spuelerRate = isWeekendBool ? 3.0 : 2.0;
-                        }
+
+            if (savedTipsSourceForDate(workDate)) {
+                const results = await recalculateSavedTipsForDate(workDate, { awaitSync: true });
+                if (results) {
+                    if (isUpdate) {
+                        showMessage('✅ Schicht aktualisiert und Trinkgeldberechnung wurde automatisch neu berechnet! ' + liveSaveMessage(liveSync, true), 'success');
+                    } else {
+                        showMessage('✅ Eintrag hinzugefügt und Trinkgeldberechnung wurde automatisch neu berechnet! ' + liveSaveMessage(liveSync, false), 'success');
                     }
-                    applySpuelerInputsFromSource(savedTip, workDate, spuelerRate.toFixed(2));
-                    
-                    // Recalculate with updated shift data
-                    const results = calculateAndSaveTips();
-                    
-                    // Restore original values (they might have been changed by user)
-                    if (!isUpdate) {
-                        document.getElementById('totalTips').value = originalTotalTips;
-                        document.getElementById('cardTips').value = originalCardTips;
-                        document.getElementById('cashTips').value = originalCashTips;
-                        document.getElementById('spuelerAdjustment').value = originalSpueler;
-                        document.getElementById('isWeekend').value = originalWeekend;
-                        updateSpuelerManualUI({ date: workDate });
-                    }
-                    
-                    // Display the updated results
-                    if (results) {
-                        // Check if we're viewing this date
-                        if (document.getElementById('workDate').value === workDate) {
-                            displayCalculationResults(results);
-                        }
-                        window.currentCalculation = results;
-                        
-                        if (isUpdate) {
-                            showMessage('✅ Schicht aktualisiert und Trinkgeldberechnung wurde automatisch neu berechnet! ' + liveSaveMessage(liveSync, true), 'success');
-                        } else {
-                            showMessage('✅ Eintrag hinzugefügt und Trinkgeldberechnung wurde automatisch neu berechnet! ' + liveSaveMessage(liveSync, false), 'success');
-                        }
-                    }
-                    return; // Exit early since we already showed a message
+                    document.getElementById('employeeName').value = '';
+                    document.getElementById('startTime').value = '';
+                    document.getElementById('endTime').value = '';
+                    document.getElementById('breakDuration').value = '';
+                    document.getElementById('lateStatus').value = '';
+                    return;
                 }
             }
             
@@ -11356,36 +11390,23 @@
                     }
                 } catch (e) {}
                 
-                // If tips are locked for this date, auto-recalculate after deletion
-                if (isTipsLockedForDate(date)) {
-                    // Admin already authenticated to delete the shift
-                    const totalTips = parseFloat(document.getElementById('totalTips').value) || 0;
-                    
-                    if (totalTips > 0) {
-                        // Check if there are still work entries for this date
-                        const remainingEntries = workEntries.filter(e => e.workDate === date);
-                        
-                        if (remainingEntries.length > 0) {
-                            // Recalculate with remaining shifts
-                            const results = calculateAndSaveTips();
-                            
-                            if (results) {
-                                displayCalculationResults(results);
-                                window.currentCalculation = results;
-                            }
-                            
+                // If tips were already saved for this date, auto-recalculate after deletion
+                if (savedTipsSourceForDate(date)) {
+                    const remainingEntries = workEntries.filter(e => e.workDate === date);
+                    if (remainingEntries.length > 0) {
+                        const results = await recalculateSavedTipsForDate(date, { awaitSync: true });
+                        if (results) {
                             showMessage('✅ Schicht gelöscht und Trinkgeldberechnung wurde automatisch neu berechnet!', 'success');
                         } else {
-                            // No shifts left - clear calculation but keep tips locked
-                            document.getElementById('calculationResults').innerHTML = '';
-                            window.currentCalculation = null;
-                            delete dailyCalculations[date];
-                            localStorage.setItem('dailyCalculations', JSON.stringify(dailyCalculations));
-                            
-                            showMessage('⚠️ Letzte Schicht gelöscht - keine Berechnung mehr möglich. Trinkgelder bleiben gesperrt.', 'warning');
+                            showMessage('Eintrag wurde gelöscht und automatisch gespeichert!', 'success');
                         }
                     } else {
-                        showMessage('Eintrag wurde gelöscht und automatisch gespeichert!', 'success');
+                        document.getElementById('calculationResults').innerHTML = '';
+                        window.currentCalculation = null;
+                        delete dailyCalculations[date];
+                        persistDailyCalculationsLocal();
+                        if (typeof queueTipStateCloudSync === 'function') queueTipStateCloudSync();
+                        showMessage('⚠️ Letzte Schicht gelöscht - keine Berechnung mehr möglich. Trinkgelder bleiben gespeichert.', 'warning');
                     }
                 } else {
                     showMessage('Eintrag wurde gelöscht und automatisch gespeichert!', 'success');
@@ -13487,7 +13508,7 @@
             // Save the calculation (but don't display it - display only happens on confirm)
             results.timestamp = new Date().toISOString();
             dailyCalculations[results.date] = results;
-            localStorage.setItem('dailyCalculations', JSON.stringify(dailyCalculations));
+            persistDailyCalculationsLocal();
             window.currentCalculation = results;
             
             // Return the results so confirmAndLockTips can display them
