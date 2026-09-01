@@ -1480,7 +1480,7 @@
         </div>
     </div>
 
-    <script src="cloud.js?v=34"></script>
+    <script src="cloud.js?v=35"></script>
     <script>
         (function(){
             function getStoreFromURL(){
@@ -2018,6 +2018,43 @@
         let appStateCloudSyncTimer = null;
         let tipStateCloudSyncPromise = null;
         let tipStateCloudSyncTimer = null;
+        let tipStateCloudSyncQueued = false;
+
+        function persistTipDataLocal() {
+            const json = JSON.stringify(tipData || {});
+            try { localStorage.setItem('tipData', json); } catch (e) {}
+            try {
+                const sid = String(window.__store_id || currentStoreId() || 'koeln').toLowerCase();
+                const key = sid === 'koeln' ? 'tipData' : sid + '_tipData';
+                if (window.cloud && typeof window.cloud.rawSet === 'function') {
+                    window.cloud.rawSet(key, json);
+                }
+            } catch (e) {}
+        }
+
+        function mergeDatedRecords(storageMap, memoryMap) {
+            const out = Object.assign({}, storageMap && typeof storageMap === 'object' ? storageMap : {});
+            Object.keys(memoryMap && typeof memoryMap === 'object' ? memoryMap : {}).forEach(function (date) {
+                const incoming = memoryMap[date];
+                const current = out[date];
+                if (current == null) {
+                    out[date] = incoming;
+                    return;
+                }
+                const inTs = incoming && typeof incoming === 'object' ? String(incoming.timestamp || '') : '';
+                const curTs = current && typeof current === 'object' ? String(current.timestamp || '') : '';
+                if (inTs && (!curTs || inTs >= curTs)) out[date] = incoming;
+            });
+            return out;
+        }
+
+        function isEditingTipAmountFields() {
+            const active = document.activeElement;
+            if (!active || !active.id) return false;
+            return active.id === 'cardTips' || active.id === 'cashTips' || active.id === 'totalTips'
+                || active.id === 'spuelerAdjustment' || active.id === 'isWeekend'
+                || String(active.id).indexOf('weeklyTip') === 0;
+        }
 
         function markAppStateModifiedLocally() {
             if (window.cloud && typeof window.cloud.markLocalAppStateModified === 'function') {
@@ -2059,14 +2096,22 @@
             if (typeof syncFn !== 'function') {
                 return { ok: false, reason: 'unavailable' };
             }
+            tipStateCloudSyncQueued = true;
             if (tipStateCloudSyncPromise) return tipStateCloudSyncPromise;
-            tipStateCloudSyncPromise = syncFn(currentStoreId())
-                .catch(function (error) {
-                    return { ok: false, error: error };
-                })
-                .finally(function () {
-                    tipStateCloudSyncPromise = null;
-                });
+            tipStateCloudSyncPromise = (async function () {
+                let last = { ok: false };
+                while (tipStateCloudSyncQueued) {
+                    tipStateCloudSyncQueued = false;
+                    try {
+                        last = await syncFn(currentStoreId());
+                    } catch (error) {
+                        last = { ok: false, error: error };
+                    }
+                }
+                return last;
+            })().finally(function () {
+                tipStateCloudSyncPromise = null;
+            });
             return tipStateCloudSyncPromise;
         }
 
@@ -2082,11 +2127,21 @@
         function queueTipStateCloudSync() {
             markTipStateModifiedLocally();
             if (tipStateCloudSyncTimer) clearTimeout(tipStateCloudSyncTimer);
+            const delay = window.__constrainedWebKitStorage ? 200 : 800;
             tipStateCloudSyncTimer = setTimeout(function () {
                 tipStateCloudSyncTimer = null;
                 syncSavedTipState();
-            }, 800);
+            }, delay);
         }
+
+        function flushTrinkgeldTipCloudSync() {
+            if (tipStateCloudSyncTimer) {
+                clearTimeout(tipStateCloudSyncTimer);
+                tipStateCloudSyncTimer = null;
+            }
+            return syncSavedTipState();
+        }
+        window.flushTrinkgeldTipCloudSync = flushTrinkgeldTipCloudSync;
 
         function cloudSaveMessage(baseMessage, sync) {
             if (!baseMessage) return baseMessage;
@@ -2180,7 +2235,13 @@
                     }
                 }
             } catch (e) {}
-            try { tipData = readJson('tipData', tipData || {}); } catch (e) {}
+            try {
+                const loadedTips = readJson('tipData', {});
+                tipData = mergeDatedRecords(loadedTips, tipData || {});
+                localStorage.setItem('tipData', JSON.stringify(tipData));
+            } catch (e) {
+                try { tipData = readJson('tipData', tipData || {}); } catch (err) {}
+            }
             try { dailyCalculations = readJson('dailyCalculations', dailyCalculations || {}); } catch (e) {}
             try {
                 const loadedEntries = readJson('workEntries', null);
@@ -10249,18 +10310,18 @@
                 delete tipData[date].manualSpuelerTargets;
             }
 
-            localStorage.setItem('tipData', JSON.stringify(tipData));
+            persistTipDataLocal();
 
             const hasWorkEntries = workEntries.some(entry => entry.workDate === date);
             if (hasWorkEntries) {
                 recalculateTipsForOverviewDate(date, tipData[date]);
                 if (dailyCalculations[date]) {
                     dailyCalculations[date].timestamp = tipData[date].timestamp;
-                    localStorage.setItem('dailyCalculations', JSON.stringify(dailyCalculations));
+                    persistDailyCalculationsLocal();
                 }
             } else if (dailyCalculations[date]) {
                 delete dailyCalculations[date];
-                localStorage.setItem('dailyCalculations', JSON.stringify(dailyCalculations));
+                persistDailyCalculationsLocal();
             }
 
             markTipStateModifiedLocally();
@@ -13517,7 +13578,7 @@
                 tipData[date].manualSpuelerMode = manualSpuelerConfig?.mode || 'all';
                 tipData[date].manualSpuelerTargets = manualSpuelerConfig?.mode === 'selected' ? manualSpuelerConfig.targetKeys : [];
             }
-            localStorage.setItem('tipData', JSON.stringify(tipData));
+            persistTipDataLocal();
             
             // Perform calculation and get results
             const results = calculateAndSaveTips();
@@ -13624,6 +13685,7 @@
             const cashTipsEl = document.getElementById('cashTips');
             const totalEl = document.getElementById('totalTips');
             if (!date || !cardTipsEl || !cashTipsEl) return;
+            if (typeof isEditingTipAmountFields === 'function' && isEditingTipAmountFields()) return;
             const savedTips = tipData[date];
             const savedCalc = dailyCalculations[date];
             if (savedTips) {
@@ -13841,15 +13903,7 @@
             if (allZero) {
                 if (typeof isTipsLockedForDate === 'function' && isTipsLockedForDate(date)) return;
                 delete tipData[date];
-                const emptyJson = JSON.stringify(tipData);
-                try { localStorage.setItem('tipData', emptyJson); } catch (e) {}
-                try {
-                    const sid = String(window.__store_id || currentStoreId() || 'koeln').toLowerCase();
-                    const storageKey = sid === 'koeln' ? 'tipData' : sid + '_tipData';
-                    if (window.cloud && typeof window.cloud.rawSet === 'function') {
-                        window.cloud.rawSet(storageKey, emptyJson);
-                    }
-                } catch (e) {}
+                persistTipDataLocal();
                 queueTipStateCloudSync();
                 return;
             }
@@ -13871,17 +13925,7 @@
                 delete tipData[date].manualSpuelerTargets;
             }
             tipData[date].timestamp = new Date().toISOString();
-            const tipJson = JSON.stringify(tipData);
-            try {
-                localStorage.setItem('tipData', tipJson);
-            } catch (e) {}
-            try {
-                const sid = String(window.__store_id || currentStoreId() || 'koeln').toLowerCase();
-                const storageKey = sid === 'koeln' ? 'tipData' : sid + '_tipData';
-                if (window.cloud && typeof window.cloud.rawSet === 'function') {
-                    window.cloud.rawSet(storageKey, tipJson);
-                }
-            } catch (e) {}
+            persistTipDataLocal();
             queueTipStateCloudSync();
         }
         
@@ -13915,6 +13959,15 @@
                 bind();
             }
         })();
+
+        document.addEventListener('visibilitychange', function () {
+            if (document.visibilityState === 'hidden' && typeof flushTrinkgeldTipCloudSync === 'function') {
+                flushTrinkgeldTipCloudSync();
+            }
+        });
+        window.addEventListener('pagehide', function () {
+            if (typeof flushTrinkgeldTipCloudSync === 'function') flushTrinkgeldTipCloudSync();
+        });
         
         function listContactsWithEditAccess(mode) {
             const settings = loadAccessControlSettings();

@@ -1049,9 +1049,6 @@ async function downloadStore(storeId) {
     const row = Array.isArray(rows) && rows.length > 0 ? rows[0] : null;
     if (row && row.state) {
       const mergeResult = applyStoreStateWithLocalMerge(sid, row.state, row);
-      try {
-        await syncTipStateToCloud(sid);
-      } catch (e) {}
       if (mergeResult.keptLocalChanges && isCloudAdmin(session)) {
         try {
           await syncAppStateToCloud(sid);
@@ -1390,6 +1387,9 @@ document.addEventListener('DOMContentLoaded', async () => {
   } finally {
     if (onTrinkgeld && typeof window.reloadTrinkgeldStoreState === 'function') {
       try { window.reloadTrinkgeldStoreState(); } catch (err) {}
+    }
+    if (onTrinkgeld && typeof window.flushTrinkgeldTipCloudSync === 'function') {
+      try { window.flushTrinkgeldTipCloudSync(); } catch (err) {}
     }
   }
 });
