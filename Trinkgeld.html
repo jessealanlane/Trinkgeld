@@ -892,6 +892,7 @@
             <div style="text-align: center; margin: 20px 0;">
                 <button class="btn" onclick="confirmAndLockTips()">💰 Trinkgeld Bestätigen und Sperren</button>
                 <button class="btn" id="unlockTipsBtn" onclick="unlockTips()" style="display: none;">🔓 Trinkgeld Bearbeiten</button>
+                <button class="btn btn-danger" id="resetDayTipsBtn" onclick="resetDayTipAmounts()" style="display: none;">↺ Beträge zurücksetzen</button>
             </div>
             
             <hr style="margin: 30px 0; border: none; border-top: 2px solid #dee2e6;">
@@ -1480,7 +1481,7 @@
         </div>
     </div>
 
-    <script src="cloud.js?v=35"></script>
+    <script src="cloud.js?v=36"></script>
     <script>
         (function(){
             function getStoreFromURL(){
@@ -13634,6 +13635,72 @@
             updateTipsLockUI();
             showMessage('🔓 Trinkgelder wurden entsperrt und können jetzt bearbeitet werden. Klicken Sie auf "Bestätigen und Sperren" nach der Bearbeitung, um die neuen Ergebnisse anzuzeigen.', 'success');
         }
+
+        async function resetDayTipAmounts() {
+            const date = document.getElementById('workDate')?.value;
+            if (!date) {
+                showMessage('Bitte wählen Sie zuerst ein Datum.', 'warning');
+                return;
+            }
+            if (!isSessionActive() || !isLeitungOrAdmin()) {
+                showMessage('Nur Leitung oder Admin können die Beträge für einen Tag zurücksetzen.', 'warning');
+                return;
+            }
+            const lockedPeriod = getLockedPeriodForDate(date);
+            if (lockedPeriod) {
+                showMessage(`🔒 Diese Periode (${lockedPeriod.label}) wurde als bezahlt markiert. Zurücksetzen nicht möglich.`, 'danger');
+                return;
+            }
+            const dateLabel = typeof formatDateGerman === 'function' ? formatDateGerman(date) : date;
+            if (!confirm(`Trinkgeldbeträge für ${dateLabel} zurücksetzen?\n\nKartentrinkgeld, Bartrinkgeld, die Berechnung und die Sperre für diesen Tag werden gelöscht. Mitarbeiter können die Beträge danach neu eintragen.`)) {
+                return;
+            }
+            if (!await authenticateAdmin('die Trinkgeldbeträge zurückzusetzen')) {
+                return;
+            }
+
+            if (tipData && tipData[date]) delete tipData[date];
+            persistTipDataLocal();
+            if (dailyCalculations && dailyCalculations[date]) {
+                delete dailyCalculations[date];
+                persistDailyCalculationsLocal();
+            }
+            const lockedTips = readLockedTipsMap();
+            if (lockedTips[date]) {
+                delete lockedTips[date];
+                writeLockedTipsMap(lockedTips);
+            }
+
+            const cardTipsEl = document.getElementById('cardTips');
+            const cashTipsEl = document.getElementById('cashTips');
+            const totalEl = document.getElementById('totalTips');
+            const spuelerEl = document.getElementById('spuelerAdjustment');
+            if (cardTipsEl) cardTipsEl.value = '';
+            if (cashTipsEl) cashTipsEl.value = '';
+            if (totalEl) totalEl.value = '';
+            if (spuelerEl) spuelerEl.value = '';
+            const resultsEl = document.getElementById('calculationResults');
+            if (resultsEl) resultsEl.innerHTML = '';
+            window.currentCalculation = null;
+
+            updateTipsLockUI();
+
+            let cloudOk = true;
+            if (window.cloud && typeof window.cloud.clearStoreTipDay === 'function') {
+                try {
+                    const cleared = await window.cloud.clearStoreTipDay(currentStoreId(), date);
+                    if (!cleared || cleared.ok === false) cloudOk = false;
+                } catch (e) {
+                    cloudOk = false;
+                }
+            }
+            const sync = await syncSavedTipState();
+            const baseMessage = `Beträge für ${dateLabel} wurden zurückgesetzt. Die Felder sind wieder leer.`;
+            showMessage(
+                cloudOk ? tipSaveMessage(baseMessage, sync) : `${baseMessage} Cloud-Löschen fehlgeschlagen.`,
+                cloudOk && sync && sync.ok ? 'success' : 'warning'
+            );
+        }
         
         function readLockedTipsMap() {
             try {
@@ -13886,6 +13953,12 @@
                     confirmBtn.style.display = 'none';
                     unlockBtn.style.display = 'none';
                 }
+            }
+            const resetBtn = document.getElementById('resetDayTipsBtn');
+            if (resetBtn) {
+                resetBtn.style.display = (isSessionActive() && isLeitungOrAdmin() && !periodLocked)
+                    ? 'inline-block'
+                    : 'none';
             }
         }
         

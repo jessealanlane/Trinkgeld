@@ -1014,6 +1014,20 @@ async function fetchDayCalculation(storeId, workDate) {
   );
 }
 
+async function clearStoreTipDay(storeId, workDate) {
+  const session = await getSession();
+  if (!session) return { ok: false, reason: 'auth' };
+  const sid = String(storeId || getStoreId() || 'koeln').toLowerCase();
+  const date = String(workDate || '').trim();
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(date)) return { ok: false, reason: 'date' };
+  return await restRequest(
+    'POST',
+    '/rest/v1/rpc/clear_store_tip_day',
+    session.access_token,
+    { p_store_id: sid, p_work_date: date }
+  );
+}
+
 function applyDayCalculation(storeId, workDate, calculation) {
   if (!workDate || calculation == null) return false;
   let parsed = calculation;
@@ -1329,6 +1343,7 @@ window.cloud = {
   fetchDeletedWorkEntryIds,
   fetchDayCalculation,
   applyDayCalculation,
+  clearStoreTipDay,
   changePassword,
   rawGet,
   rawSet,
