@@ -1594,6 +1594,43 @@
             return storeId === 'apostelnstr' || storeId === 'ehrenstr';
         }
 
+        function setupCropLocationIdle(overlay) {
+            if (!overlay || !isCropStore() || !window.__store_hasUrl) return;
+            var timer = null;
+            var DELAY = 15000;
+            function overlayVisible() {
+                return overlay.style.display === 'flex';
+            }
+            function showGate() {
+                if (timer) {
+                    clearTimeout(timer);
+                    timer = null;
+                }
+                overlay.querySelectorAll('.store-gate-btn').forEach(function(btn) {
+                    var id = (btn.getAttribute('data-store') || '').toLowerCase();
+                    btn.style.display = (id === 'apostelnstr' || id === 'ehrenstr') ? '' : 'none';
+                });
+                overlay.style.display = 'flex';
+                try {
+                    var path = location.pathname.split('/').pop() || 'Trinkgeld.html';
+                    history.replaceState({}, '', path);
+                    window.__store_hasUrl = false;
+                } catch (e) {}
+            }
+            function arm() {
+                if (timer) clearTimeout(timer);
+                if (overlayVisible()) return;
+                timer = setTimeout(showGate, DELAY);
+            }
+            ['pointerdown', 'keydown', 'touchstart', 'click', 'input', 'scroll'].forEach(function(ev) {
+                document.addEventListener(ev, function() {
+                    if (overlayVisible()) return;
+                    arm();
+                }, { passive: true });
+            });
+            arm();
+        }
+
         function getKitchenDepartmentLabel() {
             return isCropStore() ? 'Küche & Bäckerei' : 'Küche';
         }
@@ -1665,6 +1702,7 @@
                         overlay.style.display = 'none';
                     }
                     bindOverlayButtons();
+                    setupCropLocationIdle(overlay);
                 })();
             }
         });
