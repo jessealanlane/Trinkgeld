@@ -1601,11 +1601,16 @@
             function overlayVisible() {
                 return overlay.style.display === 'flex';
             }
-            function showGate() {
-                if (timer) {
-                    clearTimeout(timer);
-                    timer = null;
+            function loggedInAdmin() {
+                try {
+                    return typeof isAdmin === 'function' && isAdmin();
+                } catch (e) {
+                    return false;
                 }
+            }
+            function showGate() {
+                timer = null;
+                if (loggedInAdmin()) return;
                 overlay.querySelectorAll('.store-gate-btn').forEach(function(btn) {
                     var id = (btn.getAttribute('data-store') || '').toLowerCase();
                     btn.style.display = (id === 'apostelnstr' || id === 'ehrenstr') ? '' : 'none';
@@ -1619,7 +1624,8 @@
             }
             function arm() {
                 if (timer) clearTimeout(timer);
-                if (overlayVisible()) return;
+                timer = null;
+                if (overlayVisible() || loggedInAdmin()) return;
                 timer = setTimeout(showGate, DELAY);
             }
             ['pointerdown', 'keydown', 'touchstart', 'click', 'input', 'scroll'].forEach(function(ev) {
@@ -1629,6 +1635,7 @@
                 }, { passive: true });
             });
             arm();
+            window.__syncCropLocationIdle = arm;
         }
 
         function getKitchenDepartmentLabel() {
@@ -3138,6 +3145,7 @@
             
             // Always refresh tips lock UI to reflect elevated permissions immediately
             updateTipsLockUI();
+            try { if (typeof window.__syncCropLocationIdle === 'function') window.__syncCropLocationIdle(); } catch (e) {}
         }
         
         function endSession() {
@@ -3145,6 +3153,7 @@
             currentUser = null;
             currentUserFromCloud = false;
             try { sessionStorage.removeItem(ADMIN_STORE_SESSION_KEY); } catch (e) {}
+            try { if (typeof window.__syncCropLocationIdle === 'function') window.__syncCropLocationIdle(); } catch (e) {}
             updateUserDisplay();
             if (sessionTimeout) {
                 clearTimeout(sessionTimeout);
