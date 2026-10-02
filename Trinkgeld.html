@@ -3315,6 +3315,10 @@
             if (document.getElementById('personalEmployeeSelect')) {
                 populatePersonalEmployeeDropdown();
             }
+
+            if (document.getElementById('periodsTableContainer') && typeof displayPeriodsTable === 'function') {
+                displayPeriodsTable();
+            }
         }
         
         // Role-based access control functions
@@ -6340,7 +6344,7 @@
                 `• Keine Schichten mehr bearbeitet werden\n` +
                 `• Keine Schichten mehr gelöscht werden\n` +
                 `• Keine Trinkgeldbeträge mehr geändert werden\n\n` +
-                `Diese Aktion kann NICHT rückgängig gemacht werden!\n\n` +
+                `Nur ein Administrator kann diese Sperre später aufheben.\n\n` +
                 `Möchten Sie fortfahren?`;
             
             if (!confirm(confirmMessage)) {
@@ -6356,6 +6360,48 @@
             
             showMessage(`✅ ${period.label} wurde als bezahlt markiert und ist nun gesperrt.`, 'success');
             console.log(`🔒 Period locked: ${period.label} (ID: ${periodId})`);
+        }
+
+        function unlockPeriod(periodId) {
+            if (!isSessionActive() || !isAdmin()) {
+                alert('Nur Administratoren können eine bezahlte Periode als unbezahlt markieren.');
+                return;
+            }
+
+            const period = tipPaymentPeriods.find(p => p.id === periodId);
+            if (!period) {
+                alert('Periode nicht gefunden.');
+                return;
+            }
+
+            if (!period.paid) {
+                alert('Diese Periode ist nicht als bezahlt markiert.');
+                return;
+            }
+
+            const confirmMessage = `⚠️ PERIODE ALS UNBEZAHLT MARKIEREN\n\n` +
+                `Periode: ${period.label}\n` +
+                `Zeitraum: ${formatDateGerman(period.startDate)} - ${formatDateGerman(period.endDate)}\n\n` +
+                `Nach der Bestätigung ist dieser Zeitraum wieder offen:\n` +
+                `• Schichten können hinzugefügt, bearbeitet und gelöscht werden\n` +
+                `• Trinkgeldbeträge können geändert werden\n\n` +
+                `Möchten Sie fortfahren?`;
+
+            if (!confirm(confirmMessage)) {
+                return;
+            }
+
+            period.paid = false;
+            delete period.paidDate;
+
+            saveTipPaymentPeriodsToLocalStorage();
+            displayPeriodsTable();
+            try {
+                if (typeof updateTipsLockUI === 'function') updateTipsLockUI();
+            } catch (e) {}
+
+            showMessage(`🔓 ${period.label} wurde als unbezahlt markiert und ist wieder offen.`, 'success');
+            console.log(`🔓 Period unlocked: ${period.label} (ID: ${periodId})`);
         }
         
         function displayPeriodsTable() {
@@ -6409,8 +6455,10 @@
                 // Actions column
                 html += `<td style="padding: 10px; text-align: center;">`;
                 if (isPaid) {
-                    // Locked period - only show locked indicator
                     html += `<span style="color: #155724; font-size: 12px;">🔒 Gesperrt</span>`;
+                    if (isSessionActive() && isAdmin()) {
+                        html += `<button class="btn" onclick="unlockPeriod(${period.id})" style="padding: 5px 10px; font-size: 12px; margin-left: 8px; background: #e67e22; border-color: #e67e22;">🔓 Als Unbezahlt Markieren</button>`;
+                    }
                 } else {
                     // Open period - show all action buttons
                     html += `<button class="btn" onclick="editPeriod(${period.id})" style="padding: 5px 10px; font-size: 12px; margin-right: 5px;">✏️ Bearbeiten</button>`;
