@@ -287,12 +287,20 @@ function toWorkEntryRow(storeId, entry, deleted) {
   };
 }
 
-async function fetchWorkEntries(storeId, workDate) {
+async function fetchWorkEntries(storeId, workDate, range) {
   const session = await getSession();
   if (!session) return { ok: false, reason: 'auth', entries: [] };
   const sid = encodeURIComponent(String(storeId || getStoreId() || 'koeln').toLowerCase());
   let path = `/rest/v1/work_entries?store_id=eq.${sid}&deleted_at=is.null&select=payload&order=updated_at.asc`;
-  if (workDate) path += `&work_date=eq.${encodeURIComponent(String(workDate))}`;
+  if (workDate) {
+    path += `&work_date=eq.${encodeURIComponent(String(workDate))}`;
+  } else if (range && range.from && range.to) {
+    const from = String(range.from);
+    const to = String(range.to);
+    if (/^\d{4}-\d{2}-\d{2}$/.test(from) && /^\d{4}-\d{2}-\d{2}$/.test(to)) {
+      path += `&work_date=gte.${encodeURIComponent(from)}&work_date=lte.${encodeURIComponent(to)}`;
+    }
+  }
   const entries = [];
   let offset = 0;
   while (true) {

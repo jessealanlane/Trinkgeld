@@ -1481,7 +1481,7 @@
         </div>
     </div>
 
-    <script src="cloud.js?v=36"></script>
+    <script src="cloud.js?v=37"></script>
     <script>
         (function(){
             function getStoreFromURL(){
@@ -1931,6 +1931,61 @@
             } catch (e) {}
         }
 
+        function latestWorkEntryDate(entries) {
+            let latest = '';
+            (Array.isArray(entries) ? entries : []).forEach(function (entry) {
+                const date = entry && entry.workDate ? String(entry.workDate) : '';
+                if (date > latest) latest = date;
+            });
+            return latest;
+        }
+
+        function workEntriesSnapshotIsStale(currentEntries, loadedEntries) {
+            const currentLatest = latestWorkEntryDate(currentEntries);
+            const loadedLatest = latestWorkEntryDate(loadedEntries);
+            return !!(currentLatest && loadedLatest && loadedLatest < currentLatest);
+        }
+
+        async function fetchCloudWorkEntriesForRange(startDate, endDate) {
+            if (!startDate || !endDate) return null;
+            if (!window.cloud || typeof window.cloud.fetchWorkEntries !== 'function') return null;
+            try {
+                const result = await window.cloud.fetchWorkEntries(currentStoreId(), undefined, {
+                    from: startDate,
+                    to: endDate
+                });
+                if (!result || !result.ok || !Array.isArray(result.entries)) return null;
+                return result.entries;
+            } catch (e) {
+                return null;
+            }
+        }
+
+        function useCloudWorkEntriesForRange(startDate, endDate, freshEntries) {
+            const fresh = (Array.isArray(freshEntries) ? freshEntries : []).filter(function (entry) {
+                const date = entry && entry.workDate ? String(entry.workDate) : '';
+                return date >= startDate && date <= endDate;
+            });
+            const freshIds = {};
+            fresh.forEach(function (entry) {
+                if (entry && entry.timestamp) freshIds[String(entry.timestamp)] = true;
+            });
+            const kept = [];
+            (workEntries || []).forEach(function (entry) {
+                if (!entry) return;
+                const date = entry.workDate ? String(entry.workDate) : '';
+                const inRange = date >= startDate && date <= endDate;
+                if (!inRange) {
+                    kept.push(entry);
+                    return;
+                }
+                const id = String(entry.timestamp || '');
+                if (id && !freshIds[id]) kept.push(entry);
+            });
+            workEntries = kept.concat(fresh);
+            persistWorkEntriesLocal();
+        }
+
         function setLiveShiftStatus(text) {
             const el = document.getElementById('liveShiftStatus');
             if (el) el.textContent = text || '';
@@ -2296,7 +2351,10 @@
             try { dailyCalculations = readJson('dailyCalculations', dailyCalculations || {}); } catch (e) {}
             try {
                 const loadedEntries = readJson('workEntries', null);
-                if (Array.isArray(loadedEntries)) workEntries = loadedEntries;
+                // app_state still stores an old workEntries copy. Keep the newer in-memory cloud list.
+                if (Array.isArray(loadedEntries) && !workEntriesSnapshotIsStale(workEntries, loadedEntries)) {
+                    workEntries = loadedEntries;
+                }
             } catch (e) {}
             try { if (typeof displayTodayEntries === 'function' && document.getElementById('workDate')) displayTodayEntries(); } catch (e) {}
             try { if (typeof updateUserDisplay === 'function') updateUserDisplay(); } catch (e) {}
@@ -11158,6 +11216,11 @@
 
             const start = new Date(startDate);
             const end = new Date(endDate);
+
+            const freshPeriodEntries = await fetchCloudWorkEntriesForRange(startDate, endDate);
+            if (freshPeriodEntries) {
+                useCloudWorkEntriesForRange(startDate, endDate, freshPeriodEntries);
+            }
 
             const personalEntries = workEntries.filter(entry => {
                 const entryDate = new Date(entry.workDate);
