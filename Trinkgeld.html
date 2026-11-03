@@ -10981,13 +10981,39 @@
             document.getElementById('weeklyResults').innerHTML = html;
         }
         
+        function bankTransferLocationLabel() {
+            const storeId = String(
+                window.__store_id ||
+                sessionStorage.getItem('current_store') ||
+                localStorage.getItem('current_store') ||
+                'koeln'
+            ).toLowerCase();
+            // Köln stays "Koeln" so the reference matches the payout sample (ASCII, no umlaut).
+            const labels = {
+                koeln: 'Koeln',
+                bonn: 'Bonn',
+                apostelnstr: 'Aposteln',
+                ehrenstr: 'Ehren'
+            };
+            return labels[storeId] || storeId.replace(/[-_]+/g, ' ').replace(/\b\w/g, function (c) { return c.toUpperCase(); });
+        }
+
+        function compareBankTransferNames(a, b) {
+            const firstName = (name) => String(name || '').trim().split(/\s+/)[0] || '';
+            // ignorePunctuation keeps "Leah" before "Lea-Valentina" (hyphen is not a letter).
+            const options = { sensitivity: 'base', ignorePunctuation: true };
+            const byFirst = firstName(a).localeCompare(firstName(b), 'de', options);
+            if (byFirst !== 0) return byFirst;
+            return String(a || '').localeCompare(String(b || ''), 'de', options);
+        }
+
         function generateBankTransferFile() {
             if (!window.currentWeeklyData) {
                 showMessage('Bitte erstellen Sie zuerst eine wöchentliche Auswertung!', 'warning');
                 return;
             }
             
-            let csvContent = "Mitarbeiter Name,Mitarbeiternummer,Betrag (EUR),Zahlungsreferenz,Zahlung erfolgt über:,Datum\n";
+            let csvContent = "Mitarbeiternummer,Mitarbeiter Name,Betrag (EUR),Zahlungsreferenz,Zahlung erfolgt über:,Datum\n";
             
             // Combine tips from all departments for each staff member
             let combinedStaffData = {};
@@ -11016,8 +11042,13 @@
                 });
             });
             
+            // A→Z by the first word of the name, then the full name.
+            const staffForTransfer = Object.values(combinedStaffData)
+                .sort((a, b) => compareBankTransferNames(a.name, b.name));
+            const locationLabel = bankTransferLocationLabel();
+
             // Generate CSV rows for each staff member with combined totals
-            Object.values(combinedStaffData).forEach(staff => {
+            staffForTransfer.forEach(staff => {
                 // Get employee number from the staff data or find it in EMPLOYEES
                 let employeeNumber = staff.employeeNumber;
                 if (!employeeNumber) {
@@ -11044,13 +11075,13 @@
                 
                 const startDateFormatted = formatDateToDDMMYY(window.currentWeekDates.start);
                 const endDateFormatted = formatDateToDDMMYY(window.currentWeekDates.end);
-                const paymentReference = `Trinkgeld Koeln - ${startDateFormatted} - ${endDateFormatted} - ${staff.name}`;
+                const paymentReference = `Trinkgeld ${locationLabel} - ${startDateFormatted} - ${endDateFormatted} - ${staff.name}`;
                 
                 // Get current date for the Datum column
                 const currentDate = new Date().toISOString().split('T')[0];
                 const currentDateFormatted = formatDateToDDMMYY(currentDate);
                 
-                csvContent += `"${staff.name}",${employeeNumber || 'N/A'},${amount},"${paymentReference}","","${currentDateFormatted}"\n`;
+                csvContent += `${employeeNumber || 'N/A'},"${staff.name}",${amount},"${paymentReference}","","${currentDateFormatted}"\n`;
             });
             
             const blob = new Blob(['\uFEFF' + csvContent], { type: 'text/csv;charset=utf-8;' });
